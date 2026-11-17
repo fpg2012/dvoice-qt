@@ -22,7 +22,7 @@ public:
 
     bool start(const QAudioDevice &device, int sampleRate, int channels, int bits,
                qreal gain, QString *error);
-    void setGain(qreal gain) { m_gain = qBound(0.0, gain, 4.0); }
+    void setGain(qreal gain) { m_gain = qBound(0.0, gain, 20.0); }
     qreal gain() const { return m_gain; }
     void stop();
     void clear();

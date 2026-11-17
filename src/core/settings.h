@@ -25,7 +25,7 @@ struct Settings {
     int recordSampleRate = 48000;
     int recordChannels = 1;
     int recordBits = 24;
-    int recordGain = 100; // 百分比，100 = 原始电平
+    double recordGainDb = 0.0; // dB，0 = 原始电平
 
     static Settings defaults();
     static Settings load();

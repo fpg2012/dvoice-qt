@@ -5,6 +5,8 @@
 #include <QSettings>
 #include <QStringList>
 
+#include <cmath>
+
 namespace {
 
 QString trimmedBase(const QString &value)
@@ -66,7 +68,13 @@ Settings Settings::load()
     s.recordSampleRate = store.value(QStringLiteral("record/sampleRate"), s.recordSampleRate).toInt();
     s.recordChannels = store.value(QStringLiteral("record/channels"), s.recordChannels).toInt();
     s.recordBits = store.value(QStringLiteral("record/bits"), s.recordBits).toInt();
-    s.recordGain = store.value(QStringLiteral("record/gain"), s.recordGain).toInt();
+    if (store.contains(QStringLiteral("record/gainDb"))) {
+        s.recordGainDb = store.value(QStringLiteral("record/gainDb"), 0.0).toDouble();
+    } else if (store.contains(QStringLiteral("record/gain"))) {
+        // 兼容旧的百分比设置。
+        const int percent = store.value(QStringLiteral("record/gain"), 100).toInt();
+        s.recordGainDb = percent > 0 ? 20.0 * std::log10(percent / 100.0) : -20.0;
+    }
     if (s.baseUrl.isEmpty())
         s.baseUrl = defaults().baseUrl;
     if (s.voiceId != QLatin1String("stella") && s.voiceId != QLatin1String("tide"))
@@ -76,7 +84,7 @@ Settings Settings::load()
     s.recordChannels = s.recordChannels == 2 ? 2 : 1;
     if (s.recordBits != 16 && s.recordBits != 24 && s.recordBits != 32)
         s.recordBits = 24;
-    s.recordGain = qBound(0, s.recordGain, 200);
+    s.recordGainDb = qBound(-20.0, s.recordGainDb, 24.0);
     return s;
 }
 
@@ -100,7 +108,8 @@ void Settings::save() const
     store.setValue(QStringLiteral("record/sampleRate"), recordSampleRate);
     store.setValue(QStringLiteral("record/channels"), recordChannels);
     store.setValue(QStringLiteral("record/bits"), recordBits);
-    store.setValue(QStringLiteral("record/gain"), recordGain);
+    store.setValue(QStringLiteral("record/gainDb"), recordGainDb);
+    store.remove(QStringLiteral("record/gain"));
 }
 
 QString Settings::discoverApiKey()

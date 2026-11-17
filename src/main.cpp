@@ -207,7 +207,7 @@ int probeRecord(int seconds, const QString &outPath)
     QString error;
     if (!recorder.start(audio::findInput(settings.inputDevice), settings.recordSampleRate,
                         settings.recordChannels, settings.recordBits,
-                        settings.recordGain / 100.0, &error)) {
+                        std::pow(10.0, settings.recordGainDb / 20.0), &error)) {
         return reportError(error);
     }
 

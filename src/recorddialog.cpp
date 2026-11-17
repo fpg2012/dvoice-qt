@@ -48,6 +48,17 @@ QString dbText(qreal rms)
     return QStringLiteral("%1 dB").arg(int(std::lround(20.0 * std::log10(rms))));
 }
 
+QString gainText(double db)
+{
+    const QString sign = db > 0.05 ? QStringLiteral("+") : QString();
+    return QStringLiteral("%1%2 dB").arg(sign).arg(db, 0, 'f', 1);
+}
+
+qreal gainFactor(int sliderValue)
+{
+    return std::pow(10.0, (sliderValue / 10.0) / 20.0);
+}
+
 } // namespace
 
 RecordDialog::RecordDialog(RecordingStore *store, const Settings &settings, QWidget *parent)
@@ -121,12 +132,13 @@ RecordDialog::RecordDialog(RecordingStore *store, const Settings &settings, QWid
     formatLayout->addStretch(1);
 
     m_gain = new QSlider(Qt::Horizontal);
-    m_gain->setRange(0, 200);
+    m_gain->setRange(-200, 240);
     m_gain->setSingleStep(5);
-    m_gain->setValue(m_settings.recordGain);
-    m_gain->setToolTip(QStringLiteral("输入增益 0–200%，提高可放大弱麦克风；过高会削波"));
-    m_gainValue = new QLabel(QStringLiteral("%1%").arg(m_gain->value()));
-    m_gainValue->setMinimumWidth(48);
+    m_gain->setPageStep(10);
+    m_gain->setValue(qRound(m_settings.recordGainDb * 10.0));
+    m_gain->setToolTip(QStringLiteral("输入增益 -20～+24 dB，0 dB 为原始电平；过高会削波"));
+    m_gainValue = new QLabel(gainText(m_gain->value() / 10.0));
+    m_gainValue->setMinimumWidth(62);
     m_gainValue->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
     auto *gainRow = new QHBoxLayout;
     gainRow->addWidget(new QLabel(QStringLiteral("增益")));
@@ -183,9 +195,9 @@ RecordDialog::RecordDialog(RecordingStore *store, const Settings &settings, QWid
     m_timer->setInterval(200);
     connect(m_timer, &QTimer::timeout, this, &RecordDialog::updateElapsed);
     connect(m_gain, &QSlider::valueChanged, this, [this](int value) {
-        m_gainValue->setText(QStringLiteral("%1%").arg(value));
+        m_gainValue->setText(gainText(value / 10.0));
         if (m_recorder.isRunning())
-            m_recorder.setGain(value / 100.0);
+            m_recorder.setGain(gainFactor(value));
     });
     connect(m_recordButton, &QPushButton::clicked, this, [this] {
         if (m_recorder.isRunning())
@@ -242,7 +254,7 @@ void RecordDialog::applyFormat()
     m_settings.recordSampleRate = m_rate->currentData().toInt();
     m_settings.recordChannels = m_channels->currentData().toInt();
     m_settings.recordBits = m_bits->currentData().toInt();
-    m_settings.recordGain = m_gain->value();
+    m_settings.recordGainDb = m_gain->value() / 10.0;
     m_settings.save();
 }
 
@@ -270,7 +282,7 @@ void RecordDialog::startRecording()
     const int bits = m_bits->currentData().toInt();
 
     QString error;
-    if (!m_recorder.start(device, rate, channels, bits, m_gain->value() / 100.0, &error)) {
+    if (!m_recorder.start(device, rate, channels, bits, gainFactor(m_gain->value()), &error)) {
         QMessageBox::warning(this, QStringLiteral("无法开始录音"), error);
         m_status->setText(error);
         return;

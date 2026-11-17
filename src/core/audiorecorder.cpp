@@ -46,7 +46,7 @@ bool AudioRecorder::start(const QAudioDevice &device, int sampleRate, int channe
     }
 
     m_bits = (bits == 16 || bits == 24 || bits == 32) ? bits : 16;
-    m_gain = qBound(0.0, gain, 4.0);
+    m_gain = qBound(0.0, gain, 20.0);
     m_format = formatFor(sampleRate, channels, m_bits);
     if (!device.isFormatSupported(m_format)) {
         if (error) {
