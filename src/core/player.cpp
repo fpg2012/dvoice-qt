@@ -3,12 +3,44 @@
 #include <QAudioFormat>
 #include <QAudioSink>
 #include <QBuffer>
+#include <QTextStream>
 #include <QTimer>
 
 namespace {
 constexpr int kSampleRate = 24000;
 constexpr int kChannels = 1;
 constexpr int kBytesPerMs = kSampleRate * kChannels * 2 / 1000; // 48
+constexpr int kFrameBytes = kChannels * 2;
+constexpr int kPrebufferMs = 250;
+constexpr int kSinkBufferMs = 600;
+
+bool audioTraceEnabled()
+{
+    static const bool enabled = qEnvironmentVariableIsSet("DV_DEBUG_AUDIO");
+    return enabled;
+}
+
+void trace(const QString &message)
+{
+    if (!audioTraceEnabled())
+        return;
+    QTextStream(stderr) << "[audio] " << message << '\n';
+}
+
+QString stateName(QAudio::State state)
+{
+    switch (state) {
+    case QAudio::ActiveState:
+        return QStringLiteral("active");
+    case QAudio::SuspendedState:
+        return QStringLiteral("suspended");
+    case QAudio::StoppedState:
+        return QStringLiteral("stopped");
+    case QAudio::IdleState:
+        return QStringLiteral("idle");
+    }
+    return QStringLiteral("?");
+}
 
 QAudioFormat pcmFormat()
 {
@@ -110,6 +142,7 @@ void Player::play(const QString &text, const tts::Request &request)
     m_writeBuffer.clear();
     m_streaming = true;
     m_started = false;
+    m_flushing = false;
     setState(State::Buffering);
     m_timer->start();
     startChunk();
@@ -134,16 +167,22 @@ void Player::onAudio(const QByteArray &data)
         return;
 
     m_pcm.append(data);
+    trace(QStringLiteral("chunk %1 · pcm=%2 · pending(before)=%3")
+              .arg(data.size()).arg(m_pcm.size()).arg(m_writeBuffer.size()));
     if (!m_networkDone)
         m_durationMs = 0;
     m_writeBuffer.append(data);
     emit audioChunk(data);
 
-    if (!m_sink)
+    const qint64 prebufferBytes = qint64(kBytesPerMs) * kPrebufferMs;
+    if (!m_sink && (m_networkDone || m_pcm.size() >= prebufferBytes)) {
+        trace(QStringLiteral("start playback after %1 bytes").arg(m_pcm.size()));
         ensureSink();
-    flushWrites();
+    }
+    if (m_sink)
+        flushWrites();
 
-    if (m_state == State::Buffering && m_sink)
+    if (m_state == State::Buffering && m_sink && m_started)
         setState(State::Playing);
 }
 
@@ -164,6 +203,12 @@ void Player::onChunkFinished()
         stopSink();
         return;
     }
+    if (!m_sink)
+        ensureSink();
+    if (m_sink)
+        flushWrites();
+    if (m_state == State::Buffering && m_sink && m_started)
+        setState(State::Playing);
     checkDone();
 }
 
@@ -188,13 +233,24 @@ void Player::fail(const QString &message)
 
 void Player::ensureSink()
 {
+    if (m_sink)
+        return;
+
     QAudioFormat format = pcmFormat();
     m_sink = m_device.isNull() ? new QAudioSink(format, this)
                                : new QAudioSink(m_device, format, this);
     m_sink->setVolume(m_volume);
+    m_sink->setBufferSize(format.bytesForDuration(kSinkBufferMs * 1000));
     connect(m_sink, &QAudioSink::stateChanged, this, [this](QAudio::State state) {
         if (m_stopping)
             return;
+        trace(QStringLiteral("sink %1 · err=%2 · netDone=%3 · written=%4/%5 · pending=%6")
+                  .arg(stateName(state))
+                  .arg(int(m_sink->error()))
+                  .arg(m_networkDone)
+                  .arg(m_written)
+                  .arg(m_pcm.size())
+                  .arg(m_writeBuffer.size()));
         if (state == QAudio::StoppedState && m_sink->error() != QAudio::NoError) {
             fail(QStringLiteral("播放设备错误：%1").arg(m_device.isNull()
                                                             ? QStringLiteral("系统默认")
@@ -208,28 +264,43 @@ void Player::ensureSink()
                 finishPlayback();
                 return;
             }
+            if (state == QAudio::IdleState && !m_networkDone && m_writeBuffer.isEmpty())
+                trace(QStringLiteral("underrun while network is still streaming"));
+            flushWrites();
             checkDone();
         }
     });
 
     m_sinkIo = m_sink->start();
     m_started = m_sinkIo != nullptr;
-    if (!m_started) {
+    trace(QStringLiteral("sink start · ok=%1 · requestedBuffer=%2 · actualBuffer=%3")
+              .arg(m_started)
+              .arg(format.bytesForDuration(kSinkBufferMs * 1000))
+              .arg(m_sink->bufferSize()));
+    if (!m_started)
         fail(QStringLiteral("无法打开扬声器"));
-    }
 }
 
 void Player::flushWrites()
 {
-    if (!m_streaming || !m_sinkIo)
+    if (!m_streaming || !m_sinkIo || m_flushing)
         return;
-    while (!m_writeBuffer.isEmpty()) {
-        const qint64 accepted = m_sinkIo->write(m_writeBuffer);
+    m_flushing = true;
+    while (m_sinkIo && m_writeBuffer.size() >= kFrameBytes) {
+        const int available = m_writeBuffer.size() & ~(kFrameBytes - 1);
+        const qint64 accepted = m_sinkIo->write(m_writeBuffer.constData(), available);
         if (accepted <= 0)
             break;
+        if (accepted != available || (accepted % kFrameBytes) != 0) {
+            trace(QStringLiteral("write %1/%2 accepted · frameMisaligned=%3")
+                      .arg(accepted)
+                      .arg(available)
+                      .arg(accepted % kFrameBytes != 0));
+        }
         m_written += accepted;
         m_writeBuffer.remove(0, int(accepted));
     }
+    m_flushing = false;
 }
 
 void Player::checkDone()
@@ -270,6 +341,7 @@ void Player::stopSink()
         m_buffer = nullptr;
     }
     m_started = false;
+    m_flushing = false;
 }
 
 void Player::stop()

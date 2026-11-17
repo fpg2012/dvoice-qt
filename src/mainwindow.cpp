@@ -176,6 +176,12 @@ void MainWindow::buildActions()
     m_speakAction->setShortcut(QKeySequence(QStringLiteral("Ctrl+Return")));
     m_speakAction->setToolTip(shortcutText(QStringLiteral("朗读选中文本或全文 (Ctrl+Enter)")));
 
+    m_respeakAction = new QAction(theme::icon(QStringLiteral("refresh")),
+                                  QStringLiteral("重新合成"), this);
+    m_respeakAction->setShortcut(QKeySequence(QStringLiteral("Ctrl+Shift+Return")));
+    m_respeakAction->setToolTip(
+        shortcutText(QStringLiteral("用当前文本重新请求 TTS 合成 (Ctrl+Shift+Enter)")));
+
     m_playAction = new QAction(theme::icon(QStringLiteral("play")), QStringLiteral("播放"), this);
     m_playAction->setShortcut(QKeySequence(QStringLiteral("Ctrl+P")));
     m_playAction->setToolTip(shortcutText(QStringLiteral("播放 / 暂停 (Ctrl+P)")));
@@ -223,6 +229,13 @@ void MainWindow::buildUi()
     playButton->setFixedSize(38, 38);
     playButton->setToolButtonStyle(Qt::ToolButtonIconOnly);
 
+    auto *respeakButton = new QToolButton(bar);
+    respeakButton->setDefaultAction(m_respeakAction);
+    respeakButton->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    respeakButton->setIconSize(QSize(16, 16));
+    respeakButton->setFixedHeight(32);
+    respeakButton->setAutoRaise(false);
+
     m_time = new QLabel(QStringLiteral("00:00 / --:--"), bar);
     m_time->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
     m_time->setMinimumWidth(112);
@@ -244,6 +257,7 @@ void MainWindow::buildUi()
     m_volume->setToolTip(QStringLiteral("播放音量"));
 
     row->addWidget(playButton);
+    row->addWidget(respeakButton);
     row->addWidget(m_time);
     row->addWidget(m_progress, 1);
     row->addWidget(m_volumeIcon);
@@ -358,6 +372,7 @@ void MainWindow::buildMenus()
     audio->addAction(m_recordAction);
     audio->addAction(m_stopAction);
     audio->addAction(m_speakAction);
+    audio->addAction(m_respeakAction);
     audio->addAction(m_playAction);
     audio->addSeparator();
     auto *libraryRecord = audio->addAction(theme::icon(QStringLiteral("record")),
@@ -399,6 +414,10 @@ void MainWindow::connectSignals()
     });
     connect(m_stopAction, &QAction::triggered, this, &MainWindow::stopEverything);
     connect(m_speakAction, &QAction::triggered, this, &MainWindow::speakText);
+    connect(m_respeakAction, &QAction::triggered, this, &MainWindow::speakText);
+    const auto syncRespeak = [this] { m_respeakAction->setEnabled(m_speakAction->isEnabled()); };
+    connect(m_speakAction, &QAction::changed, this, syncRespeak);
+    syncRespeak();
     connect(m_playAction, &QAction::triggered, this, &MainWindow::togglePlayback);
     connect(m_settingsAction, &QAction::triggered, this, [this] { openPreferences(); });
 

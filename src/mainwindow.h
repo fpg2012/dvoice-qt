@@ -104,6 +104,7 @@ private:
     QAction *m_recordAction = nullptr;
     QAction *m_stopAction = nullptr;
     QAction *m_speakAction = nullptr;
+    QAction *m_respeakAction = nullptr;
     QAction *m_playAction = nullptr;
     QAction *m_settingsAction = nullptr;
 

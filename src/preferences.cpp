@@ -276,7 +276,7 @@ void showAboutDialog(QWidget *parent)
     QDialog dialog(parent);
     dialog.setWindowTitle(QStringLiteral("关于 dvoice-qt"));
     dialog.setModal(true);
-    dialog.resize(500, 430);
+    dialog.resize(500, 450);
 
     auto *icon = new QLabel;
     icon->setPixmap(theme::appIcon().pixmap(64, 64));
@@ -328,6 +328,7 @@ void showAboutDialog(QWidget *parent)
         {QStringLiteral("Ctrl+O"), QStringLiteral("打开音频文件")},
         {QStringLiteral("Ctrl+Shift+R"), QStringLiteral("录音到录音库")},
         {QStringLiteral("Ctrl+Enter"), QStringLiteral("朗读选中文本或全文")},
+        {QStringLiteral("Ctrl+Shift+Enter"), QStringLiteral("重新请求 TTS 合成")},
         {QStringLiteral("Ctrl+P"), QStringLiteral("播放 / 暂停")},
         {QStringLiteral("Ctrl+,"), QStringLiteral("首选项")},
     };

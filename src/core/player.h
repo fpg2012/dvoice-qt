@@ -90,6 +90,7 @@ private:
     bool m_streaming = true;
     bool m_networkDone = false;
     bool m_started = false;
+    bool m_flushing = false;
     bool m_stopping = false;
     qint64 m_baseMs = 0;
     qint64 m_frozenPosition = 0;
