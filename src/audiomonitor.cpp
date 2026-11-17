@@ -18,10 +18,9 @@ constexpr int kFftSize = 2048;
 constexpr int kBins = 64;
 constexpr int kMaxSeconds = 4;
 
-// 声谱图：480 列约 10 秒，160 行按对数频率分布。
+// 声谱图：480 列覆盖和波形相同的 4 秒窗口，160 行按对数频率分布。
 constexpr int kSpecWidth = 480;
 constexpr int kSpecRows = 160;
-constexpr int kSpecHopMs = 20;
 constexpr float kSpecMinFreq = 60.0f;
 constexpr float kSpecMaxFreq = 8000.0f;
 
@@ -186,7 +185,8 @@ void AudioMonitor::feed(const QByteArray &pcm)
 
 void AudioMonitor::processSpectrogram()
 {
-    const int hop = qMax(64, m_rate * kSpecHopMs / 1000);
+    // 每列的步长由窗口长度决定，保证 480 列正好铺满 kMaxSeconds。
+    const int hop = qMax(64, int(qint64(m_rate) * kMaxSeconds / kSpecWidth));
     while (m_specPending.size() >= hop) {
         for (int i = 0; i < hop; ++i)
             m_specWindow.append(m_specPending[i]);
@@ -314,11 +314,15 @@ void AudioMonitor::paintEvent(QPaintEvent *event)
 
     const qreal headerHeight = smallMetrics.height() + 4;
     const QRectF header(content.left(), content.top(), content.width(), headerHeight);
+    // 声谱图左侧留出频率刻度，波形内部也留同样宽的空位，保证两者时间轴等宽对齐。
+    const qreal gutter = m_mode == Mode::Spectrogram ? 30.0 : 0.0;
     const qreal waveRatio = m_mode == Mode::Spectrogram ? 0.42 : 0.60;
-    const QRectF wave(content.left(), header.bottom() + 2, content.width(),
-                      (content.height() - headerHeight) * waveRatio);
-    const QRectF spec(content.left(), wave.bottom() + 8, content.width(),
-                      content.bottom() - wave.bottom() - 8);
+    const QRectF waveFrame(content.left(), header.bottom() + 2, content.width(),
+                           (content.height() - headerHeight) * waveRatio);
+    const QRectF specFrame(content.left(), waveFrame.bottom() + 8, content.width(),
+                           content.bottom() - waveFrame.bottom() - 8);
+    const QRectF wave = waveFrame.adjusted(gutter, 0, 0, 0);
+    const QRectF spec = specFrame.adjusted(gutter, 0, 0, 0);
 
     painter.setFont(small);
     painter.setPen(placeholder);
@@ -340,8 +344,8 @@ void AudioMonitor::paintEvent(QPaintEvent *event)
 
     painter.setPen(QPen(quiet, 1, Qt::SolidLine));
     painter.setBrush(Qt::NoBrush);
-    painter.drawRect(wave.adjusted(0.5, 0.5, -0.5, -0.5));
-    painter.drawRect(spec.adjusted(0.5, 0.5, -0.5, -0.5));
+    painter.drawRect(waveFrame.adjusted(0.5, 0.5, -0.5, -0.5));
+    painter.drawRect(specFrame.adjusted(0.5, 0.5, -0.5, -0.5));
 
     // 波形：每列取最小/最大值。
     painter.save();
@@ -351,16 +355,26 @@ void AudioMonitor::paintEvent(QPaintEvent *event)
     painter.drawLine(QPointF(wave.left(), middle), QPointF(wave.right(), middle));
 
     const int columns = int(wave.width());
-    const int window = qMin(m_samples.size(), m_rate * 2);
-    if (window >= 2 && columns > 0) {
-        const int start = m_samples.size() - window;
+    const qint64 capacity = qint64(m_rate) * kMaxSeconds;
+    // 声谱图的列是 2048 点窗的右端，窗中心落后半个窗；波形也推迟半个窗，特征才对得上。
+    const qint64 lag = m_mode == Mode::Spectrogram ? kFftSize / 2 : 0;
+    const qint64 visibleEnd = qMax<qint64>(0, qint64(m_samples.size()) - lag);
+    if (visibleEnd > 1 && columns > 0 && capacity > 0) {
+        // 和声谱图一样按时间右对齐：不足 4 秒时左边留空，避免把短音频拉伸铺满。
+        const qint64 visibleStart = visibleEnd - capacity;
         painter.setPen(QPen(accent, 1.2));
         for (int x = 0; x < columns; ++x) {
-            const int from = start + qint64(x) * window / columns;
-            const int to = qMax(from + 1, start + qint64(x + 1) * window / columns);
+            qint64 from = visibleStart + qint64(x) * capacity / columns;
+            qint64 to = visibleStart + qint64(x + 1) * capacity / columns;
+            if (to <= 0)
+                continue;
+            from = qMax<qint64>(0, from);
+            to = qMin<qint64>(to, visibleEnd);
+            if (to <= from)
+                continue;
             float low = 0.0f;
             float high = 0.0f;
-            for (int i = from; i < to && i < m_samples.size(); ++i) {
+            for (qint64 i = from; i < to; ++i) {
                 low = qMin(low, m_samples[i]);
                 high = qMax(high, m_samples[i]);
             }
@@ -422,7 +436,7 @@ void AudioMonitor::paintEvent(QPaintEvent *event)
         }
     } else {
         painter.save();
-        const QRectF waterfall = spec.adjusted(30, 1, -1, -1);
+        const QRectF waterfall = spec.adjusted(1, 1, -1, -1);
         painter.setClipRect(waterfall);
         painter.setRenderHint(QPainter::SmoothPixmapTransform, true);
         painter.drawImage(waterfall, m_waterfall);
@@ -438,7 +452,7 @@ void AudioMonitor::paintEvent(QPaintEvent *event)
                                    spec.bottom() - 7);
             const QString label = mark >= 1000 ? QStringLiteral("%1k").arg(mark / 1000)
                                                : QString::number(mark);
-            painter.drawText(QRectF(spec.left() + 1, y - 7, 28, 14),
+            painter.drawText(QRectF(specFrame.left() + 2, y - 7, gutter - 4, 14),
                              Qt::AlignRight | Qt::AlignVCenter, label);
         }
         if (m_specColumns > 0) {

@@ -23,9 +23,13 @@ public:
     ~RecordingDetailDialog() override;
 
     void selectRangeForTest(qint64 startMs, qint64 endMs);
+    void zoomForTest(double factor);
+    void wheelForTest(int steps);
 
 private:
     void loadAudio();
+    void applyView(qint64 start, qint64 end);
+    void updateViewUi();
     void togglePlayback();
     void playSelection();
     void clearSelection();
@@ -43,13 +47,17 @@ private:
     QLabel *m_meta = nullptr;
     QLabel *m_time = nullptr;
     QLabel *m_selectionText = nullptr;
+    QLabel *m_zoomText = nullptr;
     QLabel *m_status = nullptr;
     QPushButton *m_play = nullptr;
     QPushButton *m_playSelection = nullptr;
     QPushButton *m_clearSelection = nullptr;
+    QPushButton *m_fit = nullptr;
 
     qint64 m_selectionStart = -1;
     qint64 m_selectionEnd = -1;
     qint64 m_duration = 0;
+    qint64 m_viewStart = 0;
+    qint64 m_viewEnd = 0;
     bool m_selectionPlayback = false;
 };

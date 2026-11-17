@@ -406,6 +406,12 @@ int main(int argc, char *argv[])
     QCommandLineOption detailSelectOption(
         QStringLiteral("detail-select"),
         QStringLiteral("调试：打开详情并选中 1–3 秒"));
+    QCommandLineOption detailZoomOption(
+        QStringLiteral("detail-zoom"),
+        QStringLiteral("调试：打开详情并缩放到指定倍数"), QStringLiteral("factor"));
+    QCommandLineOption detailWheelOption(
+        QStringLiteral("detail-wheel"),
+        QStringLiteral("调试：打开详情并发送滚轮事件"), QStringLiteral("steps"));
     QCommandLineOption prefsOption(QStringLiteral("prefs"), QStringLiteral("启动后打开首选项"));
     QCommandLineOption prefsTabOption(QStringLiteral("prefs-tab"),
                                       QStringLiteral("调试：打开首选项并切到指定标签页（0 起）"),
@@ -442,7 +448,7 @@ int main(int argc, char *argv[])
                                    QStringLiteral("调试：--probe-tts 使用的音色"),
                                    QStringLiteral("stella|tide"));
 
-    parser.addOptions({darkOption, lightOption, screenshotOption, screenshotDelayOption, demoOption, tabOption, openOption, dictationOption, recordDialogOption, recordAutoOption, playLibraryOption, detailOption, detailSelectOption, prefsOption, prefsTabOption,
+    parser.addOptions({darkOption, lightOption, screenshotOption, screenshotDelayOption, demoOption, tabOption, openOption, dictationOption, recordDialogOption, recordAutoOption, playLibraryOption, detailOption, detailSelectOption, detailZoomOption, detailWheelOption, prefsOption, prefsTabOption,
                        aboutOption, micTestOption, speakerTestOption, probeTtsOption,
                        probeAsrOption, probePlayOption, probeSeekOption, probeVadOption, probeRecordOption, probeAudioFileOption, outOption, voiceOption});
     parser.process(app);
@@ -497,7 +503,30 @@ int main(int argc, char *argv[])
                 detail->selectRangeForTest(1000, 3000);
         });
     }
-    if (parser.isSet(detailOption)) {
+    if (parser.isSet(detailZoomOption)) {
+        QTimer::singleShot(400, &window, [&window] {
+            window.showLibraryTab();
+            if (auto *library = window.findChild<LibraryPage *>())
+                QTimer::singleShot(300, library, [library] { library->openFirstDetailForTest(); });
+        });
+        QTimer::singleShot(1700, &window, [&window, &parser, detailZoomOption] {
+            if (auto *detail = window.findChild<RecordingDetailDialog *>())
+                detail->zoomForTest(parser.value(detailZoomOption).toDouble());
+        });
+    }
+    const bool detailWheel = parser.isSet(detailWheelOption);
+    if (detailWheel) {
+        QTimer::singleShot(400, &window, [&window] {
+            window.showLibraryTab();
+            if (auto *library = window.findChild<LibraryPage *>())
+                QTimer::singleShot(300, library, [library] { library->openFirstDetailForTest(); });
+        });
+        QTimer::singleShot(1700, &window, [&window, &parser, detailWheelOption] {
+            if (auto *detail = window.findChild<RecordingDetailDialog *>())
+                detail->wheelForTest(parser.value(detailWheelOption).toInt());
+        });
+    }
+    if (parser.isSet(detailOption) && !parser.isSet(detailZoomOption) && !detailWheel) {
         QTimer::singleShot(400, &window, [&window] {
             window.showLibraryTab();
             if (auto *library = window.findChild<LibraryPage *>())
