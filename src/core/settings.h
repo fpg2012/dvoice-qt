@@ -21,6 +21,11 @@ struct Settings {
 
     int volume = 80;
 
+    // 录音（回放库）格式设置。位深为 16/24/32 位 PCM。
+    int recordSampleRate = 48000;
+    int recordChannels = 1;
+    int recordBits = 24;
+
     static Settings defaults();
     static Settings load();
     void save() const;

@@ -78,6 +78,7 @@ MicTestDialog::MicTestDialog(const Settings &settings, QWidget *parent)
 
     m_monitor = new AudioMonitor;
     m_monitor->setSampleRate(16000);
+    m_monitor->setMode(AudioMonitor::Mode::Bars);
     m_monitor->setCaption(QStringLiteral("输入 · 16 kHz · 单声道"));
 
     m_level = new QProgressBar;
@@ -171,7 +172,8 @@ SpeakerTestDialog::SpeakerTestDialog(const Settings &settings, QWidget *parent)
     m_device->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
     m_monitor = new AudioMonitor;
     m_monitor->setSampleRate(24000);
-    m_monitor->setCaption(QStringLiteral("输出 · 24 kHz · 单声道"));
+    m_monitor->setMode(AudioMonitor::Mode::Spectrogram);
+    m_monitor->setCaption(QStringLiteral("输出 · 24 kHz · 单声道 · 声谱图"));
 
     m_volume = new QSlider(Qt::Horizontal);
     m_volume->setRange(0, 100);
@@ -316,7 +318,8 @@ void SpeakerTestDialog::startSpeech()
 {
     stopAll();
     m_monitor->clear();
-    m_monitor->setCaption(QStringLiteral("输出 · 24 kHz · 单声道"));
+    m_monitor->setMode(AudioMonitor::Mode::Spectrogram);
+    m_monitor->setCaption(QStringLiteral("输出 · 24 kHz · 单声道 · 声谱图"));
     tts::Request request;
     request.baseUrl = m_settings.endpoint();
     request.apiKey = m_settings.effectiveApiKey();

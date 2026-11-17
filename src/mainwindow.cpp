@@ -1,14 +1,23 @@
 #include "mainwindow.h"
 
 #include "audiomonitor.h"
+#include "core/audiofile.h"
 #include "core/audiodevices.h"
+#include "core/pcm.h"
+#include "core/recordingstore.h"
+#include "core/wav.h"
 #include "devicetest.h"
+#include "librarypage.h"
 #include "preferences.h"
 #include "theme.h"
 
 #include <QAction>
 #include <QApplication>
 #include <QCloseEvent>
+#include <QDateTime>
+#include <QDesktopServices>
+#include <QDragEnterEvent>
+#include <QDropEvent>
 #include <QDir>
 #include <QFile>
 #include <QFileDialog>
@@ -17,18 +26,23 @@
 #include <QLabel>
 #include <QMenu>
 #include <QMenuBar>
+#include <QFileInfo>
 #include <QMessageBox>
+#include <QMimeData>
 #include <QPlainTextEdit>
 #include <QRandomGenerator>
 #include <QSettings>
 #include <QSignalBlocker>
 #include <QSlider>
 #include <QStatusBar>
+#include <QTabWidget>
 #include <QTextCursor>
+#include <QTextDocument>
 #include <QTimer>
 #include <QToolBar>
 #include <QToolButton>
 #include <QVBoxLayout>
+#include <QUrl>
 #include <QtEndian>
 
 #include <cmath>
@@ -59,6 +73,40 @@ QString shortcutText(const QString &text)
     return text;
 }
 
+QByteArray demoAudio(double &phase, int samples)
+{
+    QByteArray pcm;
+    pcm.reserve(samples * 2);
+    for (int i = 0; i < samples; ++i) {
+        const double t = (phase + i) / 24000.0;
+        const double phrasePos = std::fmod(t, 3.4);
+        double gate = 1.0;
+        if (phrasePos < 0.45) {
+            gate = 0.02;
+        } else if (phrasePos < 0.75) {
+            gate = 0.02 + 0.98 * (phrasePos - 0.45) / 0.30;
+        } else if (phrasePos > 3.15) {
+            gate = 0.02 + 0.98 * (3.4 - phrasePos) / 0.25;
+        }
+        const double syllable = 0.55 + 0.45 * std::sin(2.0 * M_PI * 4.6 * t);
+        const double noise =
+            (QRandomGenerator::global()->generateDouble() * 2.0 - 1.0) * 0.018;
+        const double value =
+            (std::sin(2.0 * M_PI * 140.0 * t) * 0.30
+             + std::sin(2.0 * M_PI * 280.0 * t) * 0.14
+             + std::sin(2.0 * M_PI * 700.0 * t) * 0.07
+             + std::sin(2.0 * M_PI * 1200.0 * t) * 0.03)
+                * gate * syllable
+            + noise * gate;
+        const qint16 sample = qint16(qBound(-1.0, value, 1.0) * 32767.0);
+        char bytes[2];
+        qToLittleEndian(sample, bytes);
+        pcm.append(bytes, 2);
+    }
+    phase += samples;
+    return pcm;
+}
+
 } // namespace
 
 MainWindow::MainWindow(QWidget *parent)
@@ -66,7 +114,10 @@ MainWindow::MainWindow(QWidget *parent)
 {
     setWindowTitle(QStringLiteral("dvoice"));
     setWindowIcon(theme::appIcon());
-    setMinimumSize(760, 580);
+    setMinimumSize(700, 480);
+
+    m_settings = Settings::load();
+    m_store = new RecordingStore(this);
 
     buildActions();
     buildUi();
@@ -76,40 +127,9 @@ MainWindow::MainWindow(QWidget *parent)
     m_demoTimer = new QTimer(this);
     m_demoTimer->setInterval(50);
     connect(m_demoTimer, &QTimer::timeout, this, [this] {
-        const int samples = 1200; // 50 ms @ 24 kHz
-        QByteArray pcm;
-        pcm.reserve(samples * 2);
-        for (int i = 0; i < samples; ++i) {
-            const double t = (m_demoPhase + i) / 24000.0;
-            const double phrasePos = std::fmod(t, 3.4);
-            double gate = 1.0;
-            if (phrasePos < 0.45) {
-                gate = 0.02;
-            } else if (phrasePos < 0.75) {
-                gate = 0.02 + 0.98 * (phrasePos - 0.45) / 0.30;
-            } else if (phrasePos > 3.15) {
-                gate = 0.02 + 0.98 * (3.4 - phrasePos) / 0.25;
-            }
-            const double syllable = 0.55 + 0.45 * std::sin(2.0 * M_PI * 4.6 * t);
-            const double noise =
-                (QRandomGenerator::global()->generateDouble() * 2.0 - 1.0) * 0.018;
-            const double value =
-                (std::sin(2.0 * M_PI * 140.0 * t) * 0.30
-                 + std::sin(2.0 * M_PI * 280.0 * t) * 0.14
-                 + std::sin(2.0 * M_PI * 700.0 * t) * 0.07
-                 + std::sin(2.0 * M_PI * 1200.0 * t) * 0.03)
-                    * gate * syllable
-                + noise * gate;
-            const qint16 sample = qint16(qBound(-1.0, value, 1.0) * 32767.0);
-            char bytes[2];
-            qToLittleEndian(sample, bytes);
-            pcm.append(bytes, 2);
-        }
-        m_demoPhase += samples;
-        m_monitor->feed(pcm);
+        m_monitor->feed(demoAudio(m_demoPhase, 1200)); // 50 ms @ 24 kHz
     });
 
-    m_settings = Settings::load();
     m_asr.configure(m_settings.endpoint(), m_settings.effectiveApiKey());
     m_player.setOutputDevice(outputDevice());
     m_player.setVolume(m_settings.volume / 100.0);
@@ -119,15 +139,20 @@ MainWindow::MainWindow(QWidget *parent)
     }
 
     QSettings store;
-    const QByteArray geometry = store.value(QStringLiteral("window/geometry")).toByteArray();
-    if (!restoreGeometry(geometry))
-        resize(1000, 780);
+    if (store.value(QStringLiteral("window/layout")).toInt() >= 2) {
+        if (!restoreGeometry(store.value(QStringLiteral("window/geometry")).toByteArray()))
+            resize(860, 600);
+    } else {
+        resize(860, 600);
+    }
 
     refreshIcons();
     updateCost();
     setStatus(QStringLiteral("就绪"));
     updatePlayAction();
     m_stopAction->setEnabled(false);
+    m_library->applySettings(m_settings);
+    onTabChanged(m_tabs->currentIndex());
 }
 
 MainWindow::~MainWindow()
@@ -138,7 +163,7 @@ MainWindow::~MainWindow()
 
 void MainWindow::buildActions()
 {
-    m_recordAction = new QAction(theme::icon(QStringLiteral("mic")), QStringLiteral("录音"), this);
+    m_recordAction = new QAction(theme::icon(QStringLiteral("mic")), QStringLiteral("录制并转写"), this);
     m_recordAction->setCheckable(true);
     m_recordAction->setShortcut(QKeySequence(QStringLiteral("Ctrl+R")));
     m_recordAction->setToolTip(shortcutText(QStringLiteral("开始录音 (Ctrl+R)")));
@@ -163,7 +188,8 @@ void MainWindow::buildActions()
 
 void MainWindow::buildUi()
 {
-    auto *central = new QWidget(this);
+    m_transcribePage = new QWidget(this);
+    auto *central = m_transcribePage;
     auto *layout = new QVBoxLayout(central);
     layout->setContentsMargins(18, 12, 18, 8);
     layout->setSpacing(10);
@@ -176,10 +202,12 @@ void MainWindow::buildUi()
     QFont textFont = m_text->font();
     textFont.setPointSizeF(textFont.pointSizeF() + 1.0);
     m_text->setFont(textFont);
+    m_text->document()->setDocumentMargin(10);
+    m_text->setMinimumHeight(140);
     layout->addWidget(m_text, 1);
 
     m_monitor = new AudioMonitor(central);
-    m_monitor->setFixedHeight(200);
+    m_monitor->setFixedHeight(190);
     layout->addWidget(m_monitor);
 
     auto *bar = new QWidget(central);
@@ -188,9 +216,11 @@ void MainWindow::buildUi()
     row->setSpacing(10);
 
     auto *playButton = new QToolButton(bar);
+    playButton->setObjectName(QStringLiteral("transportPlay"));
     playButton->setDefaultAction(m_playAction);
-    playButton->setAutoRaise(true);
+    playButton->setAutoRaise(false);
     playButton->setIconSize(QSize(20, 20));
+    playButton->setFixedSize(38, 38);
     playButton->setToolButtonStyle(Qt::ToolButtonIconOnly);
 
     m_time = new QLabel(QStringLiteral("00:00 / --:--"), bar);
@@ -220,9 +250,23 @@ void MainWindow::buildUi()
     row->addWidget(m_volume);
     layout->addWidget(bar);
 
-    setCentralWidget(central);
+    m_tabs = new QTabWidget(this);
+    m_tabs->setObjectName(QStringLiteral("appTabs"));
+    m_tabs->setDocumentMode(true);
+    m_tabs->addTab(m_transcribePage, theme::icon(QStringLiteral("mic")),
+                   QStringLiteral("录制 · 转写"));
+    m_library = new LibraryPage(m_store, m_settings, this);
+    m_tabs->addTab(m_library, theme::icon(QStringLiteral("record")),
+                   QStringLiteral("录制 · 回放"));
+    setCentralWidget(m_tabs);
 
-    m_toolbar = addToolBar(QStringLiteral("主工具栏"));
+    m_text->viewport()->installEventFilter(this);
+    m_monitor->installEventFilter(this);
+    m_transcribePage->installEventFilter(this);
+    m_tabs->installEventFilter(this);
+
+    m_toolbar = new QToolBar(m_transcribePage);
+    layout->insertWidget(0, m_toolbar);
     m_toolbar->setMovable(false);
     m_toolbar->setFloatable(false);
     m_toolbar->setIconSize(QSize(22, 22));
@@ -246,11 +290,20 @@ void MainWindow::buildUi()
     statusBar()->addPermanentWidget(m_usage);
     statusBar()->setSizeGripEnabled(false);
     statusBar()->setMinimumHeight(28);
+
+    connect(m_tabs, &QTabWidget::currentChanged, this, &MainWindow::onTabChanged);
 }
 
 void MainWindow::buildMenus()
 {
+    menuBar()->setNativeMenuBar(false);
     auto *file = menuBar()->addMenu(QStringLiteral("文件"));
+    auto *openAudio = file->addAction(theme::icon(QStringLiteral("import")),
+                                      QStringLiteral("打开音频…"));
+    openAudio->setShortcut(QKeySequence::Open);
+    auto *openFolder = file->addAction(theme::icon(QStringLiteral("folder")),
+                                       QStringLiteral("打开录音库文件夹"));
+    file->addSeparator();
     auto *clear = file->addAction(theme::icon(QStringLiteral("clear")), QStringLiteral("清空文本"));
     clear->setShortcut(QKeySequence(QStringLiteral("Ctrl+L")));
     auto *exportAction = file->addAction(QStringLiteral("导出文本…"));
@@ -259,6 +312,16 @@ void MainWindow::buildMenus()
     auto *quit = file->addAction(QStringLiteral("退出"));
     quit->setShortcut(QKeySequence(QStringLiteral("Ctrl+Q")));
 
+    connect(openAudio, &QAction::triggered, this, [this] {
+        const QString path = QFileDialog::getOpenFileName(
+            this, QStringLiteral("打开音频"), QDir::homePath(),
+            audiofile::nameFilters().join(QStringLiteral(";;")));
+        if (!path.isEmpty())
+            openAudioFile(path);
+    });
+    connect(openFolder, &QAction::triggered, this, [this] {
+        QDesktopServices::openUrl(QUrl::fromLocalFile(m_store->directory()));
+    });
     connect(clear, &QAction::triggered, this, [this] {
         m_text->clear();
         m_recognizedMs = 0;
@@ -297,11 +360,25 @@ void MainWindow::buildMenus()
     audio->addAction(m_speakAction);
     audio->addAction(m_playAction);
     audio->addSeparator();
+    auto *libraryRecord = audio->addAction(theme::icon(QStringLiteral("record")),
+                                           QStringLiteral("录音到录音库…"));
+    libraryRecord->setShortcut(QKeySequence(QStringLiteral("Ctrl+Shift+R")));
+    auto *libraryImport = audio->addAction(theme::icon(QStringLiteral("import")),
+                                           QStringLiteral("导入音频到录音库…"));
+    audio->addSeparator();
     auto *micTest = audio->addAction(QStringLiteral("测试麦克风…"));
     auto *speakerTest = audio->addAction(QStringLiteral("测试扬声器…"));
     audio->addSeparator();
     audio->addAction(m_settingsAction);
 
+    connect(libraryRecord, &QAction::triggered, this, [this] {
+        m_tabs->setCurrentIndex(1);
+        m_library->startRecording();
+    });
+    connect(libraryImport, &QAction::triggered, this, [this] {
+        m_tabs->setCurrentIndex(1);
+        m_library->importAudio();
+    });
     connect(micTest, &QAction::triggered, this, &MainWindow::openMicTest);
     connect(speakerTest, &QAction::triggered, this, &MainWindow::openSpeakerTest);
 
@@ -325,7 +402,11 @@ void MainWindow::connectSignals()
     connect(m_playAction, &QAction::triggered, this, &MainWindow::togglePlayback);
     connect(m_settingsAction, &QAction::triggered, this, [this] { openPreferences(); });
 
-    connect(&m_recorder, &Recorder::pcmChunk, m_monitor, &AudioMonitor::feed);
+    connect(&m_recorder, &Recorder::pcmChunk, this, [this](const QByteArray &pcm) {
+        m_monitor->feed(pcm);
+        if (m_recorder.isRunning())
+            m_dictationPcm.append(pcm);
+    });
     connect(&m_recorder, &Recorder::segment, this,
             [this](const QByteArray &pcm, int startMs, int endMs) {
                 m_asr.enqueue(pcm, 16000, startMs, endMs);
@@ -349,13 +430,30 @@ void MainWindow::connectSignals()
     });
 
     connect(&m_asr, &asr::Queue::started, this, [this](int index, int) {
+        if (m_importMode) {
+            setStatus(QStringLiteral("识别 %1 · 第 %2/%3 段…")
+                          .arg(m_importName)
+                          .arg(index + 1)
+                          .arg(qMax(m_importTotal, index + 1)));
+            return;
+        }
         setStatus(QStringLiteral("正在识别第 %1 段…").arg(index + 1));
     });
     connect(&m_asr, &asr::Queue::recognized, this,
             [this](int, QString text, int durationMs, int, int) {
                 appendTranscript(text);
+                if (m_recorder.isRunning() || !m_sessionRecordingId.isEmpty())
+                    m_sessionTranscript.append(text);
                 m_recognizedMs += qMax(1, durationMs);
                 updateCost();
+                if (m_importMode) {
+                    ++m_importDone;
+                    setStatus(QStringLiteral("识别 %1 · %2/%3 段…")
+                                  .arg(m_importName)
+                                  .arg(m_importDone)
+                                  .arg(m_importTotal));
+                    return;
+                }
                 if (!m_recorder.isRunning() && !m_asr.busy()
                     && m_player.state() == Player::State::Idle)
                     setStatus(QStringLiteral("已停止"));
@@ -365,9 +463,29 @@ void MainWindow::connectSignals()
         setStatus(m_asrError);
     });
     connect(&m_asr, &asr::Queue::idle, this, [this] {
+        if (m_importMode) {
+            finishImport();
+            return;
+        }
         if (m_recorder.isRunning()) {
             setStatus(QStringLiteral("聆听中…"));
             return;
+        }
+        if (!m_sessionRecordingId.isEmpty()) {
+            const QString id = m_sessionRecordingId;
+            m_sessionRecordingId.clear();
+            if (!m_sessionTranscript.trimmed().isEmpty()) {
+                for (const Recording &recording : m_store->list()) {
+                    if (recording.id != id)
+                        continue;
+                    Recording updated = recording;
+                    updated.title = recording.title;
+                    updated.transcript = m_sessionTranscript.trimmed();
+                    m_store->update(updated);
+                    break;
+                }
+            }
+            m_sessionTranscript.clear();
         }
         if (!m_asrError.isEmpty()) {
             setStatus(m_asrError);
@@ -452,7 +570,7 @@ void MainWindow::updatePlayAction()
     bool enabled = true;
     if (state == Player::State::Buffering)
         enabled = false;
-    if (m_recorder.isRunning())
+    if (m_recorder.isRunning() || m_importMode)
         enabled = false;
 
     switch (state) {
@@ -574,6 +692,12 @@ void MainWindow::startRecording()
 {
     if (m_recorder.isRunning())
         return;
+    if (m_importMode) {
+        setStatus(QStringLiteral("正在识别音频文件，请稍后再录音"));
+        QSignalBlocker blocker(m_recordAction);
+        m_recordAction->setChecked(false);
+        return;
+    }
     if (!ensureApiKey(QStringLiteral("开始录音"))) {
         QSignalBlocker blocker(m_recordAction);
         m_recordAction->setChecked(false);
@@ -585,9 +709,13 @@ void MainWindow::startRecording()
 
     m_asr.configure(m_settings.endpoint(), m_settings.effectiveApiKey());
     m_asrError.clear();
+    m_dictationPcm.clear();
+    m_sessionRecordingId.clear();
+    m_sessionTranscript.clear();
 
     const QAudioDevice device = inputDevice();
     m_monitor->setSampleRate(16000);
+    m_monitor->setMode(AudioMonitor::Mode::Bars);
     m_monitor->clear();
     m_monitor->setCaption(QStringLiteral("输入 · %1 · 16 kHz").arg(audio::displayName(device)));
 
@@ -623,13 +751,43 @@ void MainWindow::stopRecording()
         QSignalBlocker blocker(m_recordAction);
         m_recordAction->setChecked(false);
     }
+    saveDictationRecording();
     m_speakAction->setEnabled(true);
     updatePlayAction();
     m_stopAction->setEnabled(false);
-    if (m_asr.busy())
+    if (!m_sessionRecordingId.isEmpty())
+        setStatus(QStringLiteral("结束录音 · 已保存到录音库"));
+    else if (m_asr.busy())
         setStatus(QStringLiteral("结束录音 · 正在识别剩余段落…"));
     else
         setStatus(QStringLiteral("已停止"));
+}
+
+void MainWindow::saveDictationRecording()
+{
+    if (m_dictationPcm.size() < 16000)
+        return;
+
+    const qint64 durationMs = m_dictationPcm.size() / 32;
+    const QByteArray wav = wavFromPcm(m_dictationPcm, 16000, 1);
+    RecordingInfo info;
+    info.title = m_store->nextTitle();
+    info.createdAt = QDateTime::currentDateTime();
+    info.durationMs = durationMs;
+    info.sampleRate = 16000;
+    info.channels = 1;
+    info.bits = 16;
+    info.transcript = m_sessionTranscript.trimmed();
+    info.peaks = pcm::peaks(m_dictationPcm, 1, 180);
+
+    QString error;
+    const QString id = m_store->addWav(wav, info, &error);
+    if (!id.isEmpty()) {
+        m_sessionRecordingId = id;
+    } else {
+        m_asrError = QStringLiteral("录音保存失败：%1").arg(error);
+    }
+    m_dictationPcm.clear();
 }
 
 void MainWindow::stopEverything()
@@ -651,6 +809,10 @@ void MainWindow::stopEverything()
 
 void MainWindow::speakText()
 {
+    if (m_importMode) {
+        setStatus(QStringLiteral("正在识别音频文件，请稍后再朗读"));
+        return;
+    }
     if (m_recorder.isRunning())
         stopRecording();
 
@@ -665,8 +827,9 @@ void MainWindow::speakText()
     m_demoTimer->stop();
     const QAudioDevice device = outputDevice();
     m_monitor->setSampleRate(24000);
+    m_monitor->setMode(AudioMonitor::Mode::Spectrogram);
     m_monitor->clear();
-    m_monitor->setCaption(QStringLiteral("输出 · %1 · 24 kHz").arg(audio::displayName(device)));
+    m_monitor->setCaption(QStringLiteral("输出 · %1 · 24 kHz · 声谱图").arg(audio::displayName(device)));
 
     tts::Request request;
     request.baseUrl = m_settings.endpoint();
@@ -746,6 +909,8 @@ void MainWindow::applySettings(const Settings &settings)
         setStatus(QStringLiteral("输出设备已更改，请重新朗读"));
         return;
     }
+    if (m_library)
+        m_library->applySettings(m_settings);
     setStatus(QStringLiteral("首选项已保存"));
 }
 
@@ -756,6 +921,15 @@ PreferencesDialog *MainWindow::openPreferences()
         m_prefs->activateWindow();
         return m_prefs;
     }
+    Settings latest = Settings::load();
+    const QString sessionKey = m_settings.apiKey;
+    const bool rememberKey = m_settings.rememberApiKey;
+    if (!rememberKey && !sessionKey.isEmpty()) {
+        latest.apiKey = sessionKey;
+        latest.rememberApiKey = false;
+    }
+    latest.volume = m_volume->value();
+    m_settings = latest;
     auto *dialog = new PreferencesDialog(m_settings, this);
     dialog->setAttribute(Qt::WA_DeleteOnClose);
     m_prefs = dialog;
@@ -786,6 +960,170 @@ void MainWindow::openAbout()
     showAboutDialog(this);
 }
 
+void MainWindow::showLibraryTab()
+{
+    m_tabs->setCurrentIndex(1);
+}
+
+void MainWindow::onTabChanged(int index)
+{
+    const bool library = index == 1;
+    if (library) {
+        if (m_recorder.isRunning())
+            stopRecording();
+        if (m_player.state() != Player::State::Idle)
+            m_player.stop();
+        m_toolbar->setVisible(false);
+        statusBar()->setVisible(false);
+        m_recordAction->setEnabled(false);
+        m_stopAction->setEnabled(false);
+        m_speakAction->setEnabled(false);
+        m_playAction->setEnabled(false);
+        m_library->applySettings(m_settings);
+        m_library->refresh();
+    } else {
+        m_library->stopPlayback();
+        m_toolbar->setVisible(true);
+        statusBar()->setVisible(true);
+        m_recordAction->setEnabled(!m_importMode);
+        m_speakAction->setEnabled(!m_importMode && !m_recorder.isRunning());
+        updatePlayAction();
+        m_stopAction->setEnabled(m_recorder.isRunning()
+                                 || m_player.state() == Player::State::Playing
+                                 || m_player.state() == Player::State::Paused
+                                 || m_player.state() == Player::State::Buffering);
+    }
+}
+
+void MainWindow::openAudioFile(const QString &path)
+{
+    if (path.isEmpty())
+        return;
+    if (m_importMode || m_asr.busy()) {
+        QMessageBox::information(this, QStringLiteral("请稍等"),
+                                 QStringLiteral("当前还有识别任务没有完成，请稍后再打开音频。"));
+        return;
+    }
+    if (m_recorder.isRunning())
+        stopRecording();
+    if (m_player.state() != Player::State::Idle)
+        m_player.stop();
+    if (!ensureApiKey(QStringLiteral("识别音频文件")))
+        return;
+
+    m_tabs->setCurrentIndex(0);
+    setStatus(QStringLiteral("正在解码 %1…").arg(QFileInfo(path).fileName()));
+    QApplication::processEvents();
+
+    QApplication::setOverrideCursor(Qt::WaitCursor);
+    const audiofile::DecodedAudio decoded = audiofile::decodeToMono16(path);
+    QApplication::restoreOverrideCursor();
+    if (!decoded.ok()) {
+        setStatus(QStringLiteral("解码失败"));
+        QMessageBox::warning(this, QStringLiteral("无法打开音频"), decoded.error);
+        return;
+    }
+
+    const QString name = QFileInfo(path).fileName();
+    const int feedBytes = qMin(decoded.pcm16.size(), 16000 * 2 * 10);
+    m_monitor->setSampleRate(16000);
+    m_monitor->setMode(AudioMonitor::Mode::Spectrogram);
+    m_monitor->clear();
+    m_monitor->feed(decoded.pcm16.left(feedBytes));
+    m_monitor->setCaption(QStringLiteral("文件 · %1 · 16 kHz%2")
+                              .arg(name, decoded.durationMs > 10000
+                                             ? QStringLiteral(" · 前 10 秒")
+                                             : QString()));
+
+    m_asr.configure(m_settings.endpoint(), m_settings.effectiveApiKey());
+    m_asrError.clear();
+    m_importMode = true;
+    m_importTotal = 0;
+    m_importDone = 0;
+    m_importName = name;
+    m_recordAction->setEnabled(false);
+    m_speakAction->setEnabled(false);
+    m_playAction->setEnabled(false);
+    m_stopAction->setEnabled(false);
+
+    Recorder segmenter;
+    connect(&segmenter, &Recorder::segment, this,
+            [this](const QByteArray &pcm, int startMs, int endMs) {
+                ++m_importTotal;
+                m_asr.enqueue(pcm, 16000, startMs, endMs);
+            });
+
+    VadConfig config;
+    config.silenceMs = m_settings.silenceMs;
+    config.minSpeechMs = m_settings.minSpeechMs;
+    config.maxSegmentMs = m_settings.maxSegmentMs;
+    segmenter.beginTestFeed(config);
+    segmenter.feedTestPcm(decoded.pcm16);
+    segmenter.endTestFeed();
+
+    if (m_importTotal == 0) {
+        m_importMode = false;
+        m_recordAction->setEnabled(true);
+        m_speakAction->setEnabled(true);
+        updatePlayAction();
+        setStatus(QStringLiteral("没有检测到语音 · %1").arg(name));
+        return;
+    }
+
+    setStatus(QStringLiteral("识别 %1 · 共 %2 段…").arg(name).arg(m_importTotal));
+}
+
+void MainWindow::finishImport()
+{
+    m_importMode = false;
+    m_recordAction->setEnabled(true);
+    m_speakAction->setEnabled(true);
+    m_stopAction->setEnabled(false);
+    updatePlayAction();
+    if (!m_asrError.isEmpty()) {
+        setStatus(m_asrError);
+        return;
+    }
+    setStatus(QStringLiteral("识别完成 · %1 · %2 段").arg(m_importName).arg(m_importTotal));
+}
+
+bool MainWindow::eventFilter(QObject *watched, QEvent *event)
+{
+    const auto audioPath = [](const QMimeData *mime) {
+        if (!mime || !mime->hasUrls())
+            return QString();
+        for (const QUrl &url : mime->urls()) {
+            if (!url.isLocalFile())
+                continue;
+            const QString path = url.toLocalFile();
+            if (audiofile::isAudioFile(path))
+                return path;
+        }
+        return QString();
+    };
+
+    if (event->type() == QEvent::DragEnter || event->type() == QEvent::DragMove) {
+        auto *drag = static_cast<QDropEvent *>(event);
+        if (!audioPath(drag->mimeData()).isEmpty()) {
+            drag->acceptProposedAction();
+            setStatus(QStringLiteral("松开以识别音频文件"));
+            return true;
+        }
+    } else if (event->type() == QEvent::Drop) {
+        auto *drop = static_cast<QDropEvent *>(event);
+        const QString path = audioPath(drop->mimeData());
+        if (!path.isEmpty()) {
+            drop->acceptProposedAction();
+            openAudioFile(path);
+            return true;
+        }
+    } else if (event->type() == QEvent::DragLeave) {
+        setStatus(QStringLiteral("就绪"));
+        return true;
+    }
+    return QMainWindow::eventFilter(watched, event);
+}
+
 void MainWindow::showDemo()
 {
     m_text->setPlainText(QStringLiteral(
@@ -795,8 +1133,9 @@ void MainWindow::showDemo()
         "播放这边是真流式：合成的同时就在出声，等整段下载完，进度条就可以拖动定位。"));
 
     m_monitor->setSampleRate(24000);
+    m_monitor->setMode(AudioMonitor::Mode::Spectrogram);
     m_monitor->clear();
-    m_monitor->setCaption(QStringLiteral("输出 · 演示数据 · 24 kHz"));
+    m_monitor->setCaption(QStringLiteral("输出 · 演示数据 · 24 kHz · 声谱图"));
     m_progress->setRange(0, 31000);
     m_progress->setValue(12000);
     m_progress->setEnabled(false);
@@ -809,12 +1148,16 @@ void MainWindow::showDemo()
     if (!m_demoTimer)
         return;
     m_demoPhase = 0.0;
+    m_monitor->feed(demoAudio(m_demoPhase, 24000 * 8));
     m_demoTimer->start();
 }
 
 void MainWindow::closeEvent(QCloseEvent *event)
 {
-    m_recorder.stop();
+    if (m_recorder.isRunning())
+        stopRecording();
+    else
+        m_recorder.stop();
     m_player.stop();
     if (m_demoTimer)
         m_demoTimer->stop();
@@ -822,6 +1165,7 @@ void MainWindow::closeEvent(QCloseEvent *event)
     m_settings.save();
     QSettings store;
     store.setValue(QStringLiteral("window/geometry"), saveGeometry());
+    store.setValue(QStringLiteral("window/layout"), 2);
     QMainWindow::closeEvent(event);
 }
 

@@ -63,10 +63,18 @@ Settings Settings::load()
     s.minSpeechMs = store.value(QStringLiteral("vad/minSpeechMs"), s.minSpeechMs).toInt();
     s.maxSegmentMs = store.value(QStringLiteral("vad/maxSegmentMs"), s.maxSegmentMs).toInt();
     s.volume = store.value(QStringLiteral("audio/volume"), s.volume).toInt();
+    s.recordSampleRate = store.value(QStringLiteral("record/sampleRate"), s.recordSampleRate).toInt();
+    s.recordChannels = store.value(QStringLiteral("record/channels"), s.recordChannels).toInt();
+    s.recordBits = store.value(QStringLiteral("record/bits"), s.recordBits).toInt();
     if (s.baseUrl.isEmpty())
         s.baseUrl = defaults().baseUrl;
     if (s.voiceId != QLatin1String("stella") && s.voiceId != QLatin1String("tide"))
         s.voiceId = QStringLiteral("stella");
+    if (s.recordSampleRate <= 0)
+        s.recordSampleRate = 48000;
+    s.recordChannels = s.recordChannels == 2 ? 2 : 1;
+    if (s.recordBits != 16 && s.recordBits != 24 && s.recordBits != 32)
+        s.recordBits = 24;
     return s;
 }
 
@@ -87,6 +95,9 @@ void Settings::save() const
     store.setValue(QStringLiteral("vad/minSpeechMs"), minSpeechMs);
     store.setValue(QStringLiteral("vad/maxSegmentMs"), maxSegmentMs);
     store.setValue(QStringLiteral("audio/volume"), volume);
+    store.setValue(QStringLiteral("record/sampleRate"), recordSampleRate);
+    store.setValue(QStringLiteral("record/channels"), recordChannels);
+    store.setValue(QStringLiteral("record/bits"), recordBits);
 }
 
 QString Settings::discoverApiKey()

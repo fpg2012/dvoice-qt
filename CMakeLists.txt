@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.21)
 
-project(dvoice-qt VERSION 0.1.0 LANGUAGES CXX)
+project(dvoice-qt VERSION 0.2.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -16,6 +16,10 @@ add_library(dvoice-core STATIC
     src/core/player.cpp
     src/core/settings.cpp
     src/core/wav.cpp
+    src/core/pcm.cpp
+    src/core/audiofile.cpp
+    src/core/audiorecorder.cpp
+    src/core/recordingstore.cpp
     src/core/audiodevices.cpp
 )
 target_include_directories(dvoice-core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
@@ -34,6 +38,9 @@ add_executable(dvoice-qt
     src/preferences.cpp
     src/devicetest.cpp
     src/mainwindow.cpp
+    src/recorddialog.cpp
+    src/recordingcard.cpp
+    src/librarypage.cpp
     resources.qrc
 )
 target_link_libraries(dvoice-qt PRIVATE dvoice-core Qt6::Widgets Qt6::Svg)

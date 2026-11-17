@@ -1,10 +1,14 @@
 #include "core/asr.h"
+#include "core/audiofile.h"
 #include "core/audiodevices.h"
+#include "core/audiorecorder.h"
 #include "core/player.h"
 #include "core/recorder.h"
 #include "core/settings.h"
 #include "core/tts.h"
 #include "core/wav.h"
+#include "librarypage.h"
+#include "recorddialog.h"
 #include "mainwindow.h"
 #include "preferences.h"
 #include "theme.h"
@@ -17,6 +21,7 @@
 #include <QEventLoop>
 #include <QFile>
 #include <QFileInfo>
+#include <QPushButton>
 #include <QTextStream>
 #include <QTimer>
 
@@ -194,6 +199,73 @@ int probePlayback(const QString &text, bool seekTest)
     return 0;
 }
 
+int probeRecord(int seconds, const QString &outPath)
+{
+    Settings settings = Settings::load();
+    AudioRecorder recorder;
+    QString error;
+    if (!recorder.start(audio::findInput(settings.inputDevice), settings.recordSampleRate,
+                        settings.recordChannels, settings.recordBits, &error)) {
+        return reportError(error);
+    }
+
+    QEventLoop loop;
+    qreal peakLevel = 0.0;
+    QObject::connect(&recorder, &AudioRecorder::level, &loop, [&](qreal rms, qreal) {
+        peakLevel = qMax(peakLevel, rms);
+    });
+    QObject::connect(&recorder, &AudioRecorder::errorOccurred, &loop, [&](const QString &message) {
+        QTextStream(stderr) << message << '\n';
+    });
+    QObject::connect(&recorder, &AudioRecorder::stopped, &loop, &QEventLoop::quit);
+    QTimer::singleShot(seconds * 1000, &loop, [&] { recorder.stop(); });
+    loop.exec();
+
+    if (recorder.data().isEmpty())
+        return reportError(QStringLiteral("没有采集到音频"));
+    const QString path = outPath.isEmpty() ? QStringLiteral("dvoice-record-test.wav") : outPath;
+    QFile file(path);
+    if (!file.open(QIODevice::WriteOnly))
+        return reportError(QStringLiteral("无法写入 %1").arg(path));
+    file.write(recorder.wavData(settings.recordBits));
+    file.close();
+
+    const double db = peakLevel > 1e-6 ? 20.0 * std::log10(peakLevel) : -120.0;
+    QTextStream(stdout) << QStringLiteral("录音 %1 秒 · %2 Hz · %3 声道 · %4-bit · 峰值 %5 dB\n")
+                               .arg(recorder.durationMs() / 1000.0, 0, 'f', 1)
+                               .arg(recorder.format().sampleRate())
+                               .arg(recorder.format().channelCount())
+                               .arg(settings.recordBits)
+                               .arg(int(std::lround(db)))
+                        << QStringLiteral("已写入 %1（%2 字节）\n").arg(path).arg(recorder.byteSize());
+    return 0;
+}
+
+int probeAudioFile(const QString &path)
+{
+    const audiofile::DecodedAudio decoded = audiofile::decodeToMono16(path);
+    if (!decoded.ok())
+        return reportError(QStringLiteral("解码失败：%1").arg(decoded.error));
+
+    Recorder segmenter;
+    int segments = 0;
+    QObject::connect(&segmenter, &Recorder::segment, &segmenter,
+                     [&](const QByteArray &, int start, int end) {
+                         ++segments;
+                         if (segments <= 5)
+                             QTextStream(stdout) << QStringLiteral("段 %1–%2 ms\n").arg(start).arg(end);
+                     });
+    VadConfig config;
+    config.silenceMs = 650;
+    segmenter.beginTestFeed(config);
+    segmenter.feedTestPcm(decoded.pcm16);
+    segmenter.endTestFeed();
+
+    QTextStream(stdout) << QStringLiteral("解码 %1 ms 音频（%2 字节 16 kHz PCM），VAD %3 段\n")
+                               .arg(decoded.durationMs).arg(decoded.pcm16.size()).arg(segments);
+    return 0;
+}
+
 int probeVad()
 {
     Recorder recorder;
@@ -284,6 +356,7 @@ int probeAsr(const QString &path)
 
 int main(int argc, char *argv[])
 {
+    QCoreApplication::setAttribute(Qt::AA_DontUseNativeMenuBar, true);
     QApplication app(argc, argv);
     QApplication::setApplicationName(QStringLiteral("dvoice-qt"));
     QApplication::setApplicationDisplayName(QStringLiteral("dvoice"));
@@ -303,8 +376,29 @@ int main(int argc, char *argv[])
     QCommandLineOption screenshotOption(QStringLiteral("screenshot"),
                                         QStringLiteral("保存窗口截图并退出（调试用）"),
                                         QStringLiteral("png"));
+    QCommandLineOption screenshotDelayOption(
+        QStringLiteral("screenshot-delay"),
+        QStringLiteral("调试：截图前等待的毫秒数（默认 1100）"),
+        QStringLiteral("ms"), QStringLiteral("1100"));
     QCommandLineOption demoOption(QStringLiteral("demo"),
                                   QStringLiteral("填入示例文本与波形（离线检查界面）"));
+    QCommandLineOption tabOption(QStringLiteral("tab"),
+                                 QStringLiteral("调试：启动后切到标签页（0 转写，1 回放）"),
+                                 QStringLiteral("index"));
+    QCommandLineOption openOption(QStringLiteral("open"),
+                                  QStringLiteral("调试：启动后打开并识别音频文件"),
+                                  QStringLiteral("path"));
+    QCommandLineOption dictationOption(QStringLiteral("dictation"),
+                                       QStringLiteral("调试：实时听写若干秒后停止"),
+                                       QStringLiteral("seconds"));
+    QCommandLineOption recordDialogOption(QStringLiteral("record-dialog"),
+                                          QStringLiteral("调试：打开录音库并弹出录音对话框"));
+    QCommandLineOption recordAutoOption(
+        QStringLiteral("record-dialog-auto"),
+        QStringLiteral("调试：自动录若干秒、保存并关闭录音对话框"),
+        QStringLiteral("seconds"));
+    QCommandLineOption playLibraryOption(QStringLiteral("play-library"),
+                                         QStringLiteral("调试：切到录音库并播放第一条"));
     QCommandLineOption prefsOption(QStringLiteral("prefs"), QStringLiteral("启动后打开首选项"));
     QCommandLineOption prefsTabOption(QStringLiteral("prefs-tab"),
                                       QStringLiteral("调试：打开首选项并切到指定标签页（0 起）"),
@@ -328,6 +422,12 @@ int main(int argc, char *argv[])
                                        QStringLiteral("text"));
     QCommandLineOption probeVadOption(QStringLiteral("probe-vad"),
                                       QStringLiteral("调试：用合成音频验证 VAD 分段"));
+    QCommandLineOption probeRecordOption(QStringLiteral("probe-record"),
+                                         QStringLiteral("调试：按录音设置采集若干秒并写出 WAV"),
+                                         QStringLiteral("seconds"));
+    QCommandLineOption probeAudioFileOption(QStringLiteral("probe-audiofile"),
+                                            QStringLiteral("调试：解码音频文件并打印时长"),
+                                            QStringLiteral("path"));
     QCommandLineOption outOption(QStringLiteral("out"),
                                  QStringLiteral("调试：--probe-tts 的输出路径"),
                                  QStringLiteral("path"));
@@ -335,9 +435,9 @@ int main(int argc, char *argv[])
                                    QStringLiteral("调试：--probe-tts 使用的音色"),
                                    QStringLiteral("stella|tide"));
 
-    parser.addOptions({darkOption, lightOption, screenshotOption, demoOption, prefsOption, prefsTabOption,
+    parser.addOptions({darkOption, lightOption, screenshotOption, screenshotDelayOption, demoOption, tabOption, openOption, dictationOption, recordDialogOption, recordAutoOption, playLibraryOption, prefsOption, prefsTabOption,
                        aboutOption, micTestOption, speakerTestOption, probeTtsOption,
-                       probeAsrOption, probePlayOption, probeSeekOption, probeVadOption, outOption, voiceOption});
+                       probeAsrOption, probePlayOption, probeSeekOption, probeVadOption, probeRecordOption, probeAudioFileOption, outOption, voiceOption});
     parser.process(app);
 
     if (parser.isSet(probeTtsOption))
@@ -351,6 +451,10 @@ int main(int argc, char *argv[])
         return probePlayback(parser.value(probeSeekOption), true);
     if (parser.isSet(probeVadOption))
         return probeVad();
+    if (parser.isSet(probeRecordOption))
+        return probeRecord(parser.value(probeRecordOption).toInt(), parser.value(outOption));
+    if (parser.isSet(probeAudioFileOption))
+        return probeAudioFile(parser.value(probeAudioFileOption));
 
     if (parser.isSet(darkOption))
         theme::applyScheme(true);
@@ -364,6 +468,56 @@ int main(int argc, char *argv[])
 
     if (parser.isSet(demoOption))
         window.showDemo();
+    if (parser.isSet(dictationOption)) {
+        const int seconds = qMax(1, parser.value(dictationOption).toInt());
+        QTimer::singleShot(250, &window, &MainWindow::startDictationForTest);
+        QTimer::singleShot(250 + seconds * 1000, &window, &MainWindow::stopDictationForTest);
+    }
+    if (parser.isSet(openOption)) {
+        const QString path = parser.value(openOption);
+        QTimer::singleShot(150, &window, [&window, path] { window.openAudioFile(path); });
+    }
+    if (parser.value(tabOption) == QStringLiteral("1"))
+        QTimer::singleShot(100, &window, &MainWindow::showLibraryTab);
+    if (parser.isSet(playLibraryOption)) {
+        QTimer::singleShot(500, &window, [&window] {
+            window.showLibraryTab();
+            if (auto *library = window.findChild<LibraryPage *>()) {
+                QTimer::singleShot(200, library, [library] { library->playFirstForTest(); });
+            }
+        });
+    }
+    if (parser.isSet(recordAutoOption)) {
+        const int seconds = qMax(1, parser.value(recordAutoOption).toInt());
+        QTimer::singleShot(300, &window, &MainWindow::showLibraryTab);
+        QTimer::singleShot(600, &window, [&window] {
+            if (auto *library = window.findChild<LibraryPage *>()) {
+                auto *button = window.findChild<QPushButton *>(QStringLiteral("recordButton"));
+                Q_UNUSED(button)
+                library->startRecording();
+            }
+        });
+        QTimer::singleShot(900, &window, [&window] {
+            if (auto *button = window.findChild<QPushButton *>(QStringLiteral("recordButton")))
+                button->click();
+        });
+        QTimer::singleShot(900 + seconds * 1000, &window, [&window] {
+            if (auto *button = window.findChild<QPushButton *>(QStringLiteral("recordButton"))) {
+                button->click();
+            }
+        });
+        QTimer::singleShot(1600 + seconds * 1000, &window, [&window] {
+            if (auto *dialog = window.findChild<RecordDialog *>())
+                dialog->close();
+        });
+    }
+    if (parser.isSet(recordDialogOption)) {
+        QTimer::singleShot(250, &window, [&window] {
+            window.showLibraryTab();
+            if (auto *library = window.findChild<LibraryPage *>())
+                library->startRecording();
+        });
+    }
     if (parser.isSet(prefsOption) || parser.isSet(prefsTabOption)) {
         const int tab = parser.isSet(prefsTabOption) ? parser.value(prefsTabOption).toInt() : 0;
         QTimer::singleShot(200, &window, [&window, tab] {
@@ -380,7 +534,8 @@ int main(int argc, char *argv[])
 
     const QString screenshot = parser.value(screenshotOption);
     if (!screenshot.isEmpty()) {
-        QTimer::singleShot(1100, &app, [&window, screenshot] {
+        const int delay = qMax(200, parser.value(screenshotDelayOption).toInt());
+        QTimer::singleShot(delay, &app, [&window, screenshot] {
             QWidget *target = QApplication::activeModalWidget();
             if (!target) {
                 const QWidgetList widgets = QApplication::topLevelWidgets();

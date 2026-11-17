@@ -12,5 +12,11 @@
     <file alias="volume.svg">assets/icons/volume.svg</file>
     <file alias="clear.svg">assets/icons/clear.svg</file>
     <file alias="check.svg">assets/icons/check.svg</file>
+    <file alias="rewind.svg">assets/icons/rewind.svg</file>
+    <file alias="forward.svg">assets/icons/forward.svg</file>
+    <file alias="edit.svg">assets/icons/edit.svg</file>
+    <file alias="folder.svg">assets/icons/folder.svg</file>
+    <file alias="import.svg">assets/icons/import.svg</file>
+    <file alias="export.svg">assets/icons/export.svg</file>
   </qresource>
 </RCC>

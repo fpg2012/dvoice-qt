@@ -276,7 +276,7 @@ void showAboutDialog(QWidget *parent)
     QDialog dialog(parent);
     dialog.setWindowTitle(QStringLiteral("关于 dvoice-qt"));
     dialog.setModal(true);
-    dialog.resize(500, 390);
+    dialog.resize(500, 430);
 
     auto *icon = new QLabel;
     icon->setPixmap(theme::appIcon().pixmap(64, 64));
@@ -303,7 +303,9 @@ void showAboutDialog(QWidget *parent)
     header->addLayout(headerText, 1);
 
     auto *description = new QLabel(QStringLiteral(
-        "识别：停顿断句，逐句上传并上屏。\n"
+        "识别：麦克风停顿断句，也可打开或拖入音频文件。\n"
+        "录音：16/24/32 位 WAV，自动保存到录音库。\n"
+        "回放：录音库列表、波形与 ±10 秒跳转。\n"
         "合成：边合成边播放，整段下载完可以拖动定位。"));
     description->setWordWrap(true);
 
@@ -322,7 +324,9 @@ void showAboutDialog(QWidget *parent)
     grid->setVerticalSpacing(7);
     const QFont mono = QFontDatabase::systemFont(QFontDatabase::FixedFont);
     const QVector<QPair<QString, QString>> shortcuts = {
-        {QStringLiteral("Ctrl+R"), QStringLiteral("开始 / 停止录音")},
+        {QStringLiteral("Ctrl+R"), QStringLiteral("录制并转写")},
+        {QStringLiteral("Ctrl+O"), QStringLiteral("打开音频文件")},
+        {QStringLiteral("Ctrl+Shift+R"), QStringLiteral("录音到录音库")},
         {QStringLiteral("Ctrl+Enter"), QStringLiteral("朗读选中文本或全文")},
         {QStringLiteral("Ctrl+P"), QStringLiteral("播放 / 暂停")},
         {QStringLiteral("Ctrl+,"), QStringLiteral("首选项")},
