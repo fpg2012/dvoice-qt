@@ -375,7 +375,10 @@ void AudioMonitor::paintEvent(QPaintEvent *event)
     painter.restore();
 
     const float maxFreq = qMin(8000.0f, m_rate / 2.0f);
-    const QVector<int> marks = {0, 1000, 2000, 4000, 8000};
+    const QVector<int> barMarks = {0, 1000, 2000, 4000, 8000};
+    const QVector<int> spectralMarks = spec.height() < 150.0
+        ? QVector<int>{125, 250, 500, 1000, 2000, 4000}
+        : QVector<int>{125, 250, 500, 1000, 2000, 4000, 8000};
     const float logSpan = std::log(maxFreq / 60.0f);
 
     if (m_mode == Mode::Bars) {
@@ -405,7 +408,7 @@ void AudioMonitor::paintEvent(QPaintEvent *event)
 
         painter.setFont(small);
         painter.setPen(placeholder);
-        for (const int mark : marks) {
+        for (const int mark : barMarks) {
             if (mark > maxFreq)
                 continue;
             const float position = mark == 0
@@ -419,7 +422,6 @@ void AudioMonitor::paintEvent(QPaintEvent *event)
         }
     } else {
         painter.save();
-        painter.save();
         const QRectF waterfall = spec.adjusted(30, 1, -1, -1);
         painter.setClipRect(waterfall);
         painter.setRenderHint(QPainter::SmoothPixmapTransform, true);
@@ -428,13 +430,15 @@ void AudioMonitor::paintEvent(QPaintEvent *event)
 
         painter.setFont(small);
         painter.setPen(placeholder);
-        for (const int mark : marks) {
-            if (mark < 1000 || mark > maxFreq)
+        for (const int mark : spectralMarks) {
+            if (mark > maxFreq)
                 continue;
             const qreal position = std::log(maxFreq / float(mark)) / logSpan;
-            const qreal y = spec.top() + position * spec.height();
-            const QString label = QStringLiteral("%1k").arg(mark / 1000);
-            painter.drawText(QRectF(spec.left() + 2, y - 7, 26, 14),
+            const qreal y = qBound(spec.top() + 7, spec.top() + position * spec.height(),
+                                   spec.bottom() - 7);
+            const QString label = mark >= 1000 ? QStringLiteral("%1k").arg(mark / 1000)
+                                               : QString::number(mark);
+            painter.drawText(QRectF(spec.left() + 1, y - 7, 28, 14),
                              Qt::AlignRight | Qt::AlignVCenter, label);
         }
         if (m_specColumns > 0) {

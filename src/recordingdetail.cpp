@@ -433,11 +433,18 @@ protected:
         const float logSpan = std::log(maxFreq / 60.0f);
         painter.setFont(font());
         painter.setPen(pal.color(QPalette::PlaceholderText));
-        for (const int mark : {1000, 2000, 4000, 8000}) {
+        const QVector<int> marks = imageRect.height() < 150.0
+            ? QVector<int>{125, 250, 500, 1000, 2000, 4000}
+            : QVector<int>{125, 250, 500, 1000, 2000, 4000, 8000};
+        for (const int mark : marks) {
             const qreal position = std::log(maxFreq / float(mark)) / logSpan;
-            const qreal y = imageRect.top() + position * imageRect.height();
-            painter.drawText(QRectF(2, y - 8, 28, 16), Qt::AlignRight | Qt::AlignVCenter,
-                             QStringLiteral("%1k").arg(mark / 1000));
+            const qreal y = qBound(imageRect.top() + 8,
+                                   imageRect.top() + position * imageRect.height(),
+                                   imageRect.bottom() - 8);
+            const QString label = mark >= 1000 ? QStringLiteral("%1k").arg(mark / 1000)
+                                               : QString::number(mark);
+            painter.drawText(QRectF(2, y - 8, 30, 16), Qt::AlignRight | Qt::AlignVCenter,
+                             label);
         }
     }
 
