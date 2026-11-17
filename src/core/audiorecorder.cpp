@@ -33,7 +33,7 @@ QAudioFormat AudioRecorder::formatFor(int sampleRate, int channels, int bits)
 }
 
 bool AudioRecorder::start(const QAudioDevice &device, int sampleRate, int channels, int bits,
-                          QString *error)
+                          qreal gain, QString *error)
 {
     release();
     m_data.clear();
@@ -46,6 +46,7 @@ bool AudioRecorder::start(const QAudioDevice &device, int sampleRate, int channe
     }
 
     m_bits = (bits == 16 || bits == 24 || bits == 32) ? bits : 16;
+    m_gain = qBound(0.0, gain, 4.0);
     m_format = formatFor(sampleRate, channels, m_bits);
     if (!device.isFormatSupported(m_format)) {
         if (error) {
@@ -110,11 +111,39 @@ qint64 AudioRecorder::durationMs() const
     return frames * 1000 / m_format.sampleRate();
 }
 
+QByteArray AudioRecorder::applyGain(const QByteArray &data) const
+{
+    if (data.isEmpty() || qFuzzyCompare(m_gain, 1.0))
+        return data;
+
+    QByteArray out = data;
+    char *bytes = out.data();
+    if (m_format.sampleFormat() == QAudioFormat::Int16) {
+        const int count = out.size() / 2;
+        for (int i = 0; i < count; ++i) {
+            const qint16 value = qFromLittleEndian<qint16>(bytes + i * 2);
+            const qint64 boosted = std::llround(qint64(value) * m_gain);
+            const qint16 clamped = qint16(qBound<qint64>(-32768LL, boosted, 32767LL));
+            qToLittleEndian(clamped, bytes + i * 2);
+        }
+    } else if (m_format.sampleFormat() == QAudioFormat::Int32) {
+        const int count = out.size() / 4;
+        for (int i = 0; i < count; ++i) {
+            const qint32 value = qFromLittleEndian<qint32>(bytes + i * 4);
+            const qint64 boosted = std::llround(double(value) * m_gain);
+            const qint32 clamped = qint32(
+                qBound<qint64>(-2147483648LL, boosted, 2147483647LL));
+            qToLittleEndian(clamped, bytes + i * 4);
+        }
+    }
+    return out;
+}
+
 void AudioRecorder::handleReadyRead()
 {
     if (!m_io)
         return;
-    const QByteArray chunk = m_io->readAll();
+    const QByteArray chunk = applyGain(m_io->readAll());
     if (chunk.isEmpty())
         return;
     m_data.append(chunk);

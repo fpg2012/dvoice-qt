@@ -9,6 +9,7 @@
 #include "core/wav.h"
 #include "librarypage.h"
 #include "recorddialog.h"
+#include "recordingdetail.h"
 #include "mainwindow.h"
 #include "preferences.h"
 #include "theme.h"
@@ -205,7 +206,8 @@ int probeRecord(int seconds, const QString &outPath)
     AudioRecorder recorder;
     QString error;
     if (!recorder.start(audio::findInput(settings.inputDevice), settings.recordSampleRate,
-                        settings.recordChannels, settings.recordBits, &error)) {
+                        settings.recordChannels, settings.recordBits,
+                        settings.recordGain / 100.0, &error)) {
         return reportError(error);
     }
 
@@ -399,6 +401,11 @@ int main(int argc, char *argv[])
         QStringLiteral("seconds"));
     QCommandLineOption playLibraryOption(QStringLiteral("play-library"),
                                          QStringLiteral("调试：切到录音库并播放第一条"));
+    QCommandLineOption detailOption(QStringLiteral("detail"),
+                                    QStringLiteral("调试：打开第一条录音的详情"));
+    QCommandLineOption detailSelectOption(
+        QStringLiteral("detail-select"),
+        QStringLiteral("调试：打开详情并选中 1–3 秒"));
     QCommandLineOption prefsOption(QStringLiteral("prefs"), QStringLiteral("启动后打开首选项"));
     QCommandLineOption prefsTabOption(QStringLiteral("prefs-tab"),
                                       QStringLiteral("调试：打开首选项并切到指定标签页（0 起）"),
@@ -435,7 +442,7 @@ int main(int argc, char *argv[])
                                    QStringLiteral("调试：--probe-tts 使用的音色"),
                                    QStringLiteral("stella|tide"));
 
-    parser.addOptions({darkOption, lightOption, screenshotOption, screenshotDelayOption, demoOption, tabOption, openOption, dictationOption, recordDialogOption, recordAutoOption, playLibraryOption, prefsOption, prefsTabOption,
+    parser.addOptions({darkOption, lightOption, screenshotOption, screenshotDelayOption, demoOption, tabOption, openOption, dictationOption, recordDialogOption, recordAutoOption, playLibraryOption, detailOption, detailSelectOption, prefsOption, prefsTabOption,
                        aboutOption, micTestOption, speakerTestOption, probeTtsOption,
                        probeAsrOption, probePlayOption, probeSeekOption, probeVadOption, probeRecordOption, probeAudioFileOption, outOption, voiceOption});
     parser.process(app);
@@ -479,6 +486,24 @@ int main(int argc, char *argv[])
     }
     if (parser.value(tabOption) == QStringLiteral("1"))
         QTimer::singleShot(100, &window, &MainWindow::showLibraryTab);
+    if (parser.isSet(detailSelectOption)) {
+        QTimer::singleShot(400, &window, [&window] {
+            window.showLibraryTab();
+            if (auto *library = window.findChild<LibraryPage *>())
+                QTimer::singleShot(300, library, [library] { library->openFirstDetailForTest(); });
+        });
+        QTimer::singleShot(1600, &window, [&window] {
+            if (auto *detail = window.findChild<RecordingDetailDialog *>())
+                detail->selectRangeForTest(1000, 3000);
+        });
+    }
+    if (parser.isSet(detailOption)) {
+        QTimer::singleShot(400, &window, [&window] {
+            window.showLibraryTab();
+            if (auto *library = window.findChild<LibraryPage *>())
+                QTimer::singleShot(300, library, [library] { library->openFirstDetailForTest(); });
+        });
+    }
     if (parser.isSet(playLibraryOption)) {
         QTimer::singleShot(500, &window, [&window] {
             window.showLibraryTab();

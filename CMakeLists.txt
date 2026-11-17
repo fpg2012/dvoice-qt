@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.21)
 
-project(dvoice-qt VERSION 0.2.0 LANGUAGES CXX)
+project(dvoice-qt VERSION 0.3.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -40,6 +40,7 @@ add_executable(dvoice-qt
     src/mainwindow.cpp
     src/recorddialog.cpp
     src/recordingcard.cpp
+    src/recordingdetail.cpp
     src/librarypage.cpp
     resources.qrc
 )

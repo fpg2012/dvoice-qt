@@ -156,6 +156,7 @@ RecordingCard::RecordingCard(const Recording &recording, QWidget *parent)
     top->addWidget(m_duration, 0, Qt::AlignTop);
 
     m_wave = new WaveformView(recording.peaks);
+    m_wave->setVisible(false);
     m_wave->onSeek = [this](qreal ratio) { emit seekRequested(ratio); };
 
     auto *deleteButton = new QToolButton;
@@ -192,7 +193,8 @@ RecordingCard::RecordingCard(const Recording &recording, QWidget *parent)
     editButton->setToolTip(QStringLiteral("重命名"));
     editButton->setAutoRaise(true);
 
-    auto *bottom = new QHBoxLayout;
+    m_controls = new QWidget;
+    auto *bottom = new QHBoxLayout(m_controls);
     bottom->setContentsMargins(0, 0, 0, 0);
     bottom->setSpacing(8);
     bottom->addWidget(deleteButton);
@@ -205,11 +207,17 @@ RecordingCard::RecordingCard(const Recording &recording, QWidget *parent)
     bottom->addWidget(editButton);
 
     auto *layout = new QVBoxLayout(this);
-    layout->setContentsMargins(18, 14, 18, 12);
-    layout->setSpacing(8);
+    layout->setContentsMargins(18, 10, 18, 8);
+    layout->setSpacing(6);
     layout->addLayout(top);
     layout->addWidget(m_wave);
-    layout->addLayout(bottom);
+    layout->addWidget(m_controls);
+
+    m_controls->setVisible(false);
+    for (QWidget *widget : {static_cast<QWidget *>(m_title), static_cast<QWidget *>(m_date),
+                            static_cast<QWidget *>(m_duration), static_cast<QWidget *>(m_wave),
+                            static_cast<QWidget *>(m_controls)})
+        widget->installEventFilter(this);
 
     setStyleSheet(QStringLiteral(
         "QFrame#recordingCard { background: palette(alternate-base); border: 1px solid "
@@ -245,8 +253,38 @@ void RecordingCard::setSelected(bool selected)
     if (m_selected == selected)
         return;
     m_selected = selected;
+    m_wave->setVisible(selected);
+    m_controls->setVisible(selected);
     setProperty("selected", selected);
     style()->unpolish(this);
     style()->polish(this);
+    updateGeometry();
     update();
+}
+
+bool RecordingCard::eventFilter(QObject *watched, QEvent *event)
+{
+    Q_UNUSED(watched)
+    if (event->type() == QEvent::MouseButtonPress) {
+        auto *mouse = static_cast<QMouseEvent *>(event);
+        if (mouse->button() == Qt::LeftButton)
+            emit clicked();
+    } else if (event->type() == QEvent::MouseButtonDblClick) {
+        emit doubleClicked();
+        return true;
+    }
+    return QFrame::eventFilter(watched, event);
+}
+
+void RecordingCard::mousePressEvent(QMouseEvent *event)
+{
+    if (event->button() == Qt::LeftButton)
+        emit clicked();
+    QFrame::mousePressEvent(event);
+}
+
+void RecordingCard::mouseDoubleClickEvent(QMouseEvent *event)
+{
+    emit doubleClicked();
+    QFrame::mouseDoubleClickEvent(event);
 }

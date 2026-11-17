@@ -6,6 +6,8 @@
 
 #include <QDialog>
 
+class QSlider;
+
 class AudioMonitor;
 class QComboBox;
 class QLabel;
@@ -45,6 +47,8 @@ private:
     QComboBox *m_rate = nullptr;
     QComboBox *m_channels = nullptr;
     QComboBox *m_bits = nullptr;
+    QSlider *m_gain = nullptr;
+    QLabel *m_gainValue = nullptr;
     QProgressBar *m_level = nullptr;
     QLabel *m_levelText = nullptr;
     QLabel *m_elapsed = nullptr;

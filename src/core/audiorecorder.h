@@ -21,7 +21,9 @@ public:
     static QAudioFormat formatFor(int sampleRate, int channels, int bits);
 
     bool start(const QAudioDevice &device, int sampleRate, int channels, int bits,
-               QString *error);
+               qreal gain, QString *error);
+    void setGain(qreal gain) { m_gain = qBound(0.0, gain, 4.0); }
+    qreal gain() const { return m_gain; }
     void stop();
     void clear();
 
@@ -47,11 +49,13 @@ signals:
 private:
     void handleReadyRead();
     void release();
+    QByteArray applyGain(const QByteArray &data) const;
 
     QAudioSource *m_source = nullptr;
     QIODevice *m_io = nullptr;
     QAudioFormat m_format;
     QByteArray m_data;
     int m_bits = 16;
+    qreal m_gain = 1.0;
     qint64 m_lastDurationMs = 0;
 };

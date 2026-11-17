@@ -66,6 +66,7 @@ Settings Settings::load()
     s.recordSampleRate = store.value(QStringLiteral("record/sampleRate"), s.recordSampleRate).toInt();
     s.recordChannels = store.value(QStringLiteral("record/channels"), s.recordChannels).toInt();
     s.recordBits = store.value(QStringLiteral("record/bits"), s.recordBits).toInt();
+    s.recordGain = store.value(QStringLiteral("record/gain"), s.recordGain).toInt();
     if (s.baseUrl.isEmpty())
         s.baseUrl = defaults().baseUrl;
     if (s.voiceId != QLatin1String("stella") && s.voiceId != QLatin1String("tide"))
@@ -75,6 +76,7 @@ Settings Settings::load()
     s.recordChannels = s.recordChannels == 2 ? 2 : 1;
     if (s.recordBits != 16 && s.recordBits != 24 && s.recordBits != 32)
         s.recordBits = 24;
+    s.recordGain = qBound(0, s.recordGain, 200);
     return s;
 }
 
@@ -98,6 +100,7 @@ void Settings::save() const
     store.setValue(QStringLiteral("record/sampleRate"), recordSampleRate);
     store.setValue(QStringLiteral("record/channels"), recordChannels);
     store.setValue(QStringLiteral("record/bits"), recordBits);
+    store.setValue(QStringLiteral("record/gain"), recordGain);
 }
 
 QString Settings::discoverApiKey()

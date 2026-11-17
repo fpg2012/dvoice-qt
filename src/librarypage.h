@@ -29,6 +29,7 @@ public:
     void applySettings(const Settings &settings);
     void stopPlayback();
     void playFirstForTest();
+    void openFirstDetailForTest();
     void startRecording();
     void importAudio();
 
@@ -40,6 +41,8 @@ private:
     void seek(const Recording &recording, qreal ratio);
     void renameRecording(const Recording &recording);
     void deleteRecording(const Recording &recording);
+    void selectRecording(const QString &id);
+    void openDetail(const Recording &recording);
     void exportRecording(const Recording &recording);
     void updateCardStates();
     void setStatus(const QString &text);
@@ -58,5 +61,6 @@ private:
     QHash<QString, RecordingCard *> m_cards;
     QVector<Recording> m_recordings;
     QString m_currentId;
+    QString m_selectedId;
     qint64 m_pendingSeekMs = -1;
 };

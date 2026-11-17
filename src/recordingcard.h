@@ -28,9 +28,15 @@ signals:
     void renameRequested();
     void exportRequested();
     void deleteRequested();
+    void clicked();
+    void doubleClicked();
+
+protected:
+    bool eventFilter(QObject *watched, QEvent *event) override;
+    void mousePressEvent(QMouseEvent *event) override;
+    void mouseDoubleClickEvent(QMouseEvent *event) override;
 
 private:
-    void refreshStyle();
 
     Recording m_recording;
     QLabel *m_title = nullptr;
@@ -38,5 +44,6 @@ private:
     QLabel *m_duration = nullptr;
     WaveformView *m_wave = nullptr;
     QToolButton *m_play = nullptr;
+    QWidget *m_controls = nullptr;
     bool m_selected = false;
 };

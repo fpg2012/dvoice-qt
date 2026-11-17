@@ -5,6 +5,7 @@
 #include "core/pcm.h"
 #include "recorddialog.h"
 #include "recordingcard.h"
+#include "recordingdetail.h"
 #include "theme.h"
 
 #include <QApplication>
@@ -209,17 +210,38 @@ void LibraryPage::rebuild()
         connect(card, &RecordingCard::deleteRequested, this, [this, recording] {
             deleteRecording(recording);
         });
+        connect(card, &RecordingCard::clicked, this, [this, id = recording.id] {
+            selectRecording(id);
+        });
+        connect(card, &RecordingCard::doubleClicked, this, [this, recording] {
+            openDetail(recording);
+        });
         connect(card, &RecordingCard::exportRequested, this, [this, recording] {
             exportRecording(recording);
         });
         m_listLayout->addWidget(card);
     }
     m_listLayout->addStretch(1);
-    m_cards.remove(m_currentId);
+
+    if (m_recordings.isEmpty()) {
+        m_selectedId.clear();
+    } else {
+        bool found = false;
+        for (const Recording &recording : m_recordings)
+            found = found || recording.id == m_selectedId;
+        if (!found)
+            m_selectedId = m_recordings.first().id;
+        for (auto it = m_cards.begin(); it != m_cards.end(); ++it)
+            it.value()->setSelected(it.key() == m_selectedId);
+    }
 }
 
 void LibraryPage::togglePlayback(const Recording &recording)
 {
+    if (m_selectedId != recording.id) {
+        m_selectedId = recording.id;
+        updateCardStates();
+    }
     if (m_currentId == recording.id) {
         if (m_player->playbackState() == QMediaPlayer::PlayingState)
             m_player->pause();
@@ -236,13 +258,12 @@ void LibraryPage::startPlayback(const Recording &recording, qint64 positionMs)
 {
     m_player->stop();
     m_currentId = recording.id;
+    m_selectedId = recording.id;
     m_pendingSeekMs = positionMs > 0 ? positionMs : -1;
     m_audio->setDevice(audio::findOutput(m_settings.outputDevice));
     m_player->setSource(QUrl::fromLocalFile(recording.path));
     m_player->play();
 
-    for (auto it = m_cards.begin(); it != m_cards.end(); ++it)
-        it.value()->setSelected(it.key() == m_currentId);
     if (RecordingCard *card = m_cards.value(m_currentId))
         card->setProgress(0.0);
     updateCardStates();
@@ -299,6 +320,23 @@ void LibraryPage::deleteRecording(const Recording &recording)
         QMessageBox::warning(this, QStringLiteral("删除失败"), error);
 }
 
+void LibraryPage::selectRecording(const QString &id)
+{
+    if (id.isEmpty() || id == m_selectedId)
+        return;
+    m_selectedId = id;
+    updateCardStates();
+}
+
+void LibraryPage::openDetail(const Recording &recording)
+{
+    stopPlayback();
+    m_selectedId = recording.id;
+    updateCardStates();
+    RecordingDetailDialog dialog(recording, Settings::load(), this);
+    dialog.exec();
+}
+
 void LibraryPage::exportRecording(const Recording &recording)
 {
     const QFileInfo source(recording.path);
@@ -330,7 +368,7 @@ void LibraryPage::updateCardStates()
     for (auto it = m_cards.begin(); it != m_cards.end(); ++it) {
         const bool current = it.key() == m_currentId;
         it.value()->setPlaying(current && m_player->playbackState() == QMediaPlayer::PlayingState);
-        it.value()->setSelected(current);
+        it.value()->setSelected(it.key() == m_selectedId);
     }
 }
 
@@ -340,7 +378,6 @@ void LibraryPage::stopPlayback()
         m_player->stop();
     if (RecordingCard *card = m_cards.value(m_currentId)) {
         card->setPlaying(false);
-        card->setSelected(false);
         card->setProgress(0.0);
     }
     m_currentId.clear();
@@ -403,6 +440,12 @@ void LibraryPage::importAudio()
     }
     refresh();
     setStatus(QStringLiteral("已导入 %1").arg(QFileInfo(path).fileName()));
+}
+
+void LibraryPage::openFirstDetailForTest()
+{
+    if (!m_recordings.isEmpty())
+        openDetail(m_recordings.first());
 }
 
 void LibraryPage::playFirstForTest()

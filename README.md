@@ -11,22 +11,25 @@ DeepSeek 语音识别（ASR）与语音合成（TTS）的 Qt 6 桌面客户端�
 
 - **连续听写**：说完一句停顿约 650 ms 自动切段上传，文本按顺序追加；手动停止会冲刷最后一段。
 - **自动入库**：听写和独立录音都会保存到同一个录音库，附标题、时间、时长、波形峰值和转写文本。
-- **录音格式**：录音对话框可选采样率（16/24/44.1/48 kHz）、声道（单/双）和位深（16/24/32 位 PCM WAV）。
+- **录音格式与增益**：录音对话框可选采样率（16/24/44.1/48 kHz）、声道（单/双）、位深（16/24/32 位 PCM WAV），并有 0–200% 的输入增益滑条，实时作用到采集、电平、波形和最终 WAV。
 - **实时电平**：录音时显示电平条、dBFS、时长和文件大小，同时显示波形与声谱图。
-- **录音库回放**：卡片式列表，带静态波形、播放/暂停、前进/后退 10 秒、点击波形定位、重命名、删除、导出音频。
+- **紧凑录音库**：只有选中项展开波形和操作按钮，其他录音保持紧凑；点击选中，双击进入详情。
+- **录音详情**：高分辨率全段波形、整段声谱图，拖动选区后可只播放选中的片段。
 - **文件识别**：文件 → 打开音频（Ctrl+O）或直接把音频拖进窗口，解码后按停顿分段识别。
 - **重新合成**：播放条上明确的「重新合成」按钮，丢弃当前音频并按当前选区/全文重新请求 TTS。
 - **声谱图**：播放/解码时显示“时间 × 频率”的滚动热力图；录音时显示瞬时柱状频谱。
 - **设备选择**：输入/输出设备可在首选项选择；菜单里有独立的麦克风/扬声器测试对话框。
 - **跟随系统主题**：普通按钮、输入框、标签页使用 Qt 默认外观；播放控件和波形单独设计。
 
-| 录音库 | 录音对话框 |
+| 录音库 | 录音详情 |
 |---|---|
-| ![录音库](docs/library.png) | ![录音](docs/record-dialog.png) |
+| ![录音库](docs/library.png) | ![录音详情](docs/detail.png) |
 
-| 文件识别 | 首选项 |
+| 录音对话框 | 文件识别 |
 |---|---|
-| ![导入识别](docs/import.png) | ![首选项](docs/preferences.png) |
+| ![录音](docs/record-dialog.png) | ![导入识别](docs/import.png) |
+
+![首选项](docs/preferences.png)
 
 ![关于](docs/about.png)
 
@@ -85,13 +88,16 @@ TTS 朗读仍在转写页：选中文本后 `Ctrl+Enter` 只读选中内容；�
 点「录音」打开录音对话框：
 
 - 选择输入设备、采样率、声道、位深；
+- 「增益」滑条 0–200%，录音中可实时调整，作用到电平、波形和最终 WAV；
 - 开始录音后显示电平、时长、大小、波形和声谱图；
 - 停止即保存到录音库；关闭对话框后列表自动刷新。
 
 卡片操作：
 
+- 单击卡片选中，只有选中项展开波形和操作按钮，其他录音保持紧凑；
 - 播放/暂停；前进/后退 10 秒；点击波形跳到对应位置；
 - 铅笔重命名；垃圾桶删除；导出按钮复制音频；
+- 双击卡片进入详情：高分辨率全段波形 + 整段声谱图；在波形上拖动选择一段后点「播放选区」，单击波形定位；
 - 顶部的「导入音频」把文件复制进录音库用于回放（转写请用转写页的「打开音频」）。
 
 ### 快捷键
@@ -135,7 +141,8 @@ src/core/
 src/
   audiomonitor.*    波形 / 频谱 / 声谱图
   librarypage.*     录音库列表与回放
-  recordingcard.*   录音卡片
+  recordingcard.*   录音卡片（选中展开）
+  recordingdetail.* 录音详情（波形、声谱、选区播放）
   recorddialog.*    录音对话框（格式、电平、保存）
   preferences.*     首选项 / 关于
   devicetest.*      麦克风 / 扬声器测试
@@ -167,6 +174,7 @@ src/
 ./build/dvoice-qt --dark --demo --screenshot out/main-dark.png
 ./build/dvoice-qt --light --demo --screenshot out/main-light.png
 ./build/dvoice-qt --tab 1 --screenshot out/library.png
+./build/dvoice-qt --detail --screenshot out/detail.png
 ./build/dvoice-qt --record-dialog --screenshot out/record.png
 ./build/dvoice-qt --prefs --screenshot out/prefs.png
 ./build/dvoice-qt --about --screenshot out/about.png

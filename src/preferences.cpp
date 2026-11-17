@@ -304,8 +304,8 @@ void showAboutDialog(QWidget *parent)
 
     auto *description = new QLabel(QStringLiteral(
         "识别：麦克风停顿断句，也可打开或拖入音频文件。\n"
-        "录音：16/24/32 位 WAV，自动保存到录音库。\n"
-        "回放：录音库列表、波形与 ±10 秒跳转。\n"
+        "录音：16/24/32 位 WAV，增益可调，自动保存到录音库。\n"
+        "回放：选中展开波形，双击详情，可播放选区。\n"
         "合成：边合成边播放，整段下载完可以拖动定位。"));
     description->setWordWrap(true);
 

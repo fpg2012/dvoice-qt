@@ -19,5 +19,6 @@
     <file alias="import.svg">assets/icons/import.svg</file>
     <file alias="export.svg">assets/icons/export.svg</file>
     <file alias="refresh.svg">assets/icons/refresh.svg</file>
+    <file alias="back.svg">assets/icons/back.svg</file>
   </qresource>
 </RCC>
