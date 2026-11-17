@@ -1,0 +1,7 @@
+build*/
+out/
+dvoice-out/
+*.user
+*.autosave
+*.wav
+*.pcm

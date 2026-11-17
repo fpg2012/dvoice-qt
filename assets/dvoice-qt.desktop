@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=dvoice-qt
+Comment=DeepSeek 语音识别与语音合成桌面客户端
+Exec=dvoice-qt
+Icon=dvoice-qt
+Terminal=false
+Categories=AudioVideo;Audio;Utility;
+StartupWMClass=dvoice-qt
