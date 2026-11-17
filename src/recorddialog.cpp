@@ -14,6 +14,8 @@
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QMessageBox>
+#include <QFontMetrics>
+#include <QPainter>
 #include <QPalette>
 #include <QProgressBar>
 #include <QSlider>
@@ -58,6 +60,61 @@ qreal gainFactor(int sliderValue)
 {
     return std::pow(10.0, (sliderValue / 10.0) / 20.0);
 }
+
+class GainSlider : public QSlider
+{
+public:
+    explicit GainSlider(QWidget *parent = nullptr)
+        : QSlider(Qt::Horizontal, parent)
+    {
+        setMinimumHeight(46);
+        setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    }
+
+protected:
+    void paintEvent(QPaintEvent *event) override
+    {
+        QSlider::paintEvent(event);
+
+        QPainter painter(this);
+        const QPalette pal = palette();
+        const QColor tick = pal.color(QPalette::Mid);
+        const QColor text = pal.color(QPalette::PlaceholderText);
+        const QColor accent = pal.color(QPalette::Highlight);
+
+        QFont small = font();
+        small.setPointSizeF(qMax(7.0, font().pointSizeF() - 2.0));
+        painter.setFont(small);
+        const QFontMetrics metrics(small);
+
+        const int margin = 8;
+        const int span = qMax(1, width() - margin * 2);
+        const int baseline = height() - 16;
+        const int values[] = {-200, -120, -60, 0, 60, 120, 180, 240};
+        for (const int value : values) {
+            if (value < minimum() || value > maximum())
+                continue;
+            const double ratio = double(value - minimum()) / (maximum() - minimum());
+            const int x = margin + int(ratio * span);
+            const bool zero = value == 0;
+            painter.setPen(QPen(zero ? accent : tick, 1));
+            painter.drawLine(x, baseline, x, baseline + 3);
+
+            const int db = value / 10;
+            const QString label = QStringLiteral("%1%2")
+                                      .arg(db > 0 ? QStringLiteral("+") : QString())
+                                      .arg(db);
+            const int textWidth = metrics.horizontalAdvance(label);
+            QRect rect(x - textWidth / 2, baseline + 4, textWidth, metrics.height());
+            if (rect.left() < 0)
+                rect.moveLeft(0);
+            if (rect.right() >= width())
+                rect.moveRight(width() - 1);
+            painter.setPen(zero ? accent : text);
+            painter.drawText(rect, Qt::AlignCenter, label);
+        }
+    }
+};
 
 } // namespace
 
@@ -131,7 +188,7 @@ RecordDialog::RecordDialog(RecordingStore *store, const Settings &settings, QWid
     formatLayout->addWidget(m_bits);
     formatLayout->addStretch(1);
 
-    m_gain = new QSlider(Qt::Horizontal);
+    m_gain = new GainSlider;
     m_gain->setRange(-200, 240);
     m_gain->setSingleStep(5);
     m_gain->setPageStep(10);
