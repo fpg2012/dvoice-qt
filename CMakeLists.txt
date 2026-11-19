@@ -46,6 +46,18 @@ add_executable(dvoice-qt
 )
 target_link_libraries(dvoice-qt PRIVATE dvoice-core Qt6::Widgets Qt6::Svg)
 
+# Windows 下按 GUI 子系统链接，避免启动时额外弹出一个控制台窗口。
+# Qt 的入口点目标在不同安装里名字不同，按可用性挑一个。
+if(WIN32)
+    set_target_properties(dvoice-qt PROPERTIES WIN32_EXECUTABLE TRUE)
+    foreach(_ep Qt6::EntryPoint Qt6::EntryPointPrivate Qt6::EntryPointImplementation)
+        if(TARGET ${_ep})
+            target_link_libraries(dvoice-qt PRIVATE ${_ep})
+            break()
+        endif()
+    endforeach()
+endif()
+
 install(TARGETS dvoice-qt RUNTIME DESTINATION bin)
 install(FILES assets/app.svg DESTINATION share/icons/hicolor/scalable/apps RENAME dvoice-qt.svg)
 install(FILES assets/dvoice-qt.desktop DESTINATION share/applications)
