@@ -1,5 +1,8 @@
 #include "core/recorder.h"
 
+#include "core/audiodevices.h"
+#include "core/pcm.h"
+
 #include <QAudioSource>
 #include <QIODevice>
 #include <QTimer>
@@ -36,6 +39,7 @@ QAudioFormat Recorder::format()
 void Recorder::resetState()
 {
     m_pending.clear();
+    m_rawPending.clear();
     m_segment.clear();
     m_preroll.clear();
     m_prerollMs.clear();
@@ -61,16 +65,23 @@ bool Recorder::start(const QAudioDevice &device, const VadConfig &config, QStrin
             *error = QStringLiteral("没有可用的输入设备");
         return false;
     }
-    if (!device.isFormatSupported(format())) {
-        if (error) {
-            *error = QStringLiteral("「%1」不支持 16 kHz 单声道录音")
-                         .arg(device.description());
-        }
+
+    const audio::ResolvedFormat resolved =
+        audio::resolveInputFormat(device, format().sampleRate(), format().channelCount(),
+                                  format().sampleFormat() == QAudioFormat::Int16 ? 16 : 32);
+    if (!resolved.format.isValid()) {
+        if (error)
+            *error = QStringLiteral("「%1」没有可用的录音格式").arg(device.description());
         return false;
     }
+    m_format = resolved.format;
+    m_convert = resolved.format.sampleRate() != format().sampleRate()
+        || resolved.format.channelCount() != format().channelCount()
+        || resolved.format.sampleFormat() != format().sampleFormat();
+    m_rawPending.clear();
 
-    m_source = new QAudioSource(device, format(), this);
-    m_source->setBufferSize(format().bytesForDuration(100000)); // 100 ms
+    m_source = new QAudioSource(device, m_format, this);
+    m_source->setBufferSize(m_format.bytesForDuration(100000)); // 100 ms
     m_stopping = false;
     m_io = m_source->start();
     if (!m_io || m_source->error() != QAudio::NoError) {
@@ -153,7 +164,20 @@ void Recorder::handleReadyRead()
 {
     if (!m_io)
         return;
-    m_pending.append(m_io->readAll());
+    QByteArray chunk = m_io->readAll();
+    if (m_convert) {
+        m_rawPending.append(chunk);
+        const int frameBytes = m_format.bytesPerFrame();
+        const int usable = frameBytes > 0 ? (m_rawPending.size() / frameBytes) * frameBytes : 0;
+        if (usable <= 0)
+            return;
+        const QByteArray raw = m_rawPending.left(usable);
+        m_rawPending.remove(0, usable);
+        chunk = pcm::mono16(raw, m_format, format().sampleRate());
+        if (chunk.isEmpty())
+            return;
+    }
+    m_pending.append(chunk);
     while (m_pending.size() >= kFrameBytes) {
         processFrame(m_pending.constData());
         m_pending.remove(0, kFrameBytes);

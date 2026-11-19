@@ -38,6 +38,8 @@ private:
     void updateElapsed();
     void applyFormat();
     void setRecordingUi(bool recording);
+    // 把三个下拉框纠正为当前设备真正支持的组合；无可用格式时返回 false。
+    bool syncFormatWithDevice();
 
     RecordingStore *m_store;
     Settings m_settings;

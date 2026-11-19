@@ -5,6 +5,7 @@
 #include <QAudioFormat>
 #include <QByteArray>
 #include <QObject>
+#include <QString>
 #include <QVector>
 
 class QAudioSource;
@@ -30,6 +31,9 @@ public:
     bool isRunning() const { return m_source != nullptr; }
     int bits() const { return m_bits; }
     const QAudioFormat &format() const { return m_format; }
+    // 设备实际格式与请求不一致时为 true，note() 给出可读说明。
+    bool formatAdjusted() const { return m_adjusted; }
+    const QString &formatNote() const { return m_note; }
     const QByteArray &data() const { return m_data; }
     qint64 durationMs() const;
     qint64 byteSize() const { return m_data.size(); }
@@ -56,6 +60,8 @@ private:
     QAudioFormat m_format;
     QByteArray m_data;
     int m_bits = 16;
+    bool m_adjusted = false;
+    QString m_note;
     qreal m_gain = 1.0;
     qint64 m_lastDurationMs = 0;
 };

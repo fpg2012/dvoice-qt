@@ -20,6 +20,7 @@
 #include <QProgressBar>
 #include <QSlider>
 #include <QPushButton>
+#include <QSignalBlocker>
 #include <QTimer>
 #include <QUrl>
 #include <QVBoxLayout>
@@ -290,6 +291,40 @@ RecordDialog::RecordDialog(RecordingStore *store, const Settings &settings, QWid
     connect(&m_recorder, &AudioRecorder::errorOccurred, this, [this](const QString &message) {
         m_status->setText(message);
     });
+
+    // 切换设备后立即换成该设备支持的格式，避免停在不可能成功的组合上。
+    connect(m_device, &QComboBox::currentIndexChanged, this,
+            [this](int) { syncFormatWithDevice(); });
+
+    // 手动改格式时只提示，不强行改选；开始录音前再统一纠正。
+    const auto previewFormat = [this] {
+        const QAudioDevice device = audio::findInput(m_device->currentData().toString());
+        const int rate = m_rate->currentData().toInt();
+        const int channels = m_channels->currentData().toInt();
+        const int bits = m_bits->currentData().toInt();
+        const audio::ResolvedFormat resolved =
+            audio::resolveInputFormat(device, rate, channels, bits);
+        if (!resolved.format.isValid()) {
+            m_status->setText(QStringLiteral("「%1」没有可用的录音格式。")
+                                  .arg(audio::displayName(device)));
+            return;
+        }
+        m_monitor->setSampleRate(resolved.sampleRate);
+        if (resolved.adjusted && !m_recorder.isRunning()) {
+            m_status->setText(QStringLiteral("该设备不支持 %1，开始录音时将自动使用 %2。")
+                                  .arg(audio::formatText(rate, channels, bits),
+                                       audio::formatText(resolved.sampleRate, resolved.channels,
+                                                         resolved.bits)));
+        }
+    };
+    connect(m_rate, &QComboBox::currentIndexChanged, this,
+            [previewFormat](int) { previewFormat(); });
+    connect(m_channels, &QComboBox::currentIndexChanged, this,
+            [previewFormat](int) { previewFormat(); });
+    connect(m_bits, &QComboBox::currentIndexChanged, this,
+            [previewFormat](int) { previewFormat(); });
+
+    syncFormatWithDevice();
 }
 
 RecordDialog::~RecordDialog()
@@ -315,6 +350,50 @@ void RecordDialog::applyFormat()
     m_settings.save();
 }
 
+bool RecordDialog::syncFormatWithDevice()
+{
+    const QAudioDevice device = audio::findInput(m_device->currentData().toString());
+    const int rate = m_rate->currentData().toInt();
+    const int channels = m_channels->currentData().toInt();
+    const int bits = m_bits->currentData().toInt();
+
+    const audio::ResolvedFormat resolved = audio::resolveInputFormat(device, rate, channels, bits);
+    if (!resolved.format.isValid()) {
+        m_status->setText(QStringLiteral("「%1」没有可用的录音格式。")
+                              .arg(audio::displayName(device)));
+        return false;
+    }
+
+    m_monitor->setSampleRate(resolved.sampleRate);
+    if (!resolved.adjusted)
+        return true;
+
+    const QSignalBlocker blockRate(m_rate);
+    const QSignalBlocker blockChannels(m_channels);
+    const QSignalBlocker blockBits(m_bits);
+    auto select = [](QComboBox *combo, int value, const QString &text) {
+        int index = combo->findData(value);
+        if (index < 0) {
+            combo->addItem(text, value);
+            index = combo->count() - 1;
+        }
+        combo->setCurrentIndex(index);
+    };
+    select(m_rate, resolved.sampleRate, QStringLiteral("%1 Hz").arg(resolved.sampleRate));
+    select(m_channels, resolved.channels,
+           resolved.channels == 2 ? QStringLiteral("双声道") : QStringLiteral("单声道"));
+    select(m_bits, resolved.bits, QStringLiteral("%1-bit PCM").arg(resolved.bits));
+
+    if (!m_recorder.isRunning()) {
+        m_status->setText(QStringLiteral("「%1」不支持 %2，已自动切换为 %3。")
+                              .arg(audio::displayName(device),
+                                   audio::formatText(rate, channels, bits),
+                                   audio::formatText(resolved.sampleRate, resolved.channels,
+                                                     resolved.bits)));
+    }
+    return true;
+}
+
 void RecordDialog::setRecordingUi(bool recording)
 {
     m_rate->setEnabled(!recording);
@@ -333,6 +412,10 @@ void RecordDialog::startRecording()
         return;
 
     applyFormat();
+    if (!syncFormatWithDevice()) {
+        QMessageBox::warning(this, QStringLiteral("无法开始录音"), m_status->text());
+        return;
+    }
     const QAudioDevice device = audio::findInput(m_device->currentData().toString());
     const int rate = m_rate->currentData().toInt();
     const int channels = m_channels->currentData().toInt();
@@ -345,19 +428,22 @@ void RecordDialog::startRecording()
         return;
     }
 
-    m_monitor->setSampleRate(rate);
+    const QAudioFormat actual = m_recorder.format();
+    m_monitor->setSampleRate(actual.sampleRate());
     m_monitor->setMode(AudioMonitor::Mode::Spectrogram);
     m_monitor->clear();
     m_monitor->setCaption(QStringLiteral("录制 · %1 · %2 Hz · %3 声道 · %4-bit")
                               .arg(audio::displayName(device))
-                              .arg(rate)
-                              .arg(channels)
-                              .arg(bits));
+                              .arg(actual.sampleRate())
+                              .arg(actual.channelCount())
+                              .arg(m_recorder.bits()));
     m_level->setValue(0);
     m_levelText->setText(QStringLiteral("−∞ dB"));
     m_elapsed->setText(QStringLiteral("00:00"));
     m_size->setText(QStringLiteral("0 KB"));
-    m_status->setText(QStringLiteral("正在录音…"));
+    m_status->setText(m_recorder.formatNote().isEmpty()
+                          ? QStringLiteral("正在录音…")
+                          : m_recorder.formatNote() + QStringLiteral(" 正在录音…"));
     setRecordingUi(true);
     m_timer->start();
 }
@@ -385,7 +471,7 @@ void RecordDialog::saveRecording()
         return;
     }
 
-    const int outputBits = m_bits->currentData().toInt();
+    const int outputBits = m_recorder.bits();
     const QByteArray wav = m_recorder.wavData(outputBits);
     if (wav.isEmpty()) {
         m_status->setText(QStringLiteral("没有可保存的音频。"));

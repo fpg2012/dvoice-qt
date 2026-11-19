@@ -58,6 +58,11 @@ private:
     QAudioDevice m_device;
     VadConfig m_config;
 
+    // 设备只接受非 16 kHz/单声道/16-bit 时，按设备格式采集再重采样到 ASR 需要的格式。
+    QAudioFormat m_format;
+    QByteArray m_rawPending;
+    bool m_convert = false;
+
     QByteArray m_pending;
     QByteArray m_segment;
     std::deque<QByteArray> m_preroll;

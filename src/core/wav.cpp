@@ -2,6 +2,9 @@
 
 #include <QtEndian>
 
+#include <cmath>
+#include <cstring>
+
 namespace {
 
 void appendU16(QByteArray &out, quint16 value)
@@ -55,6 +58,7 @@ QByteArray wavFromCaptured(const QByteArray &pcm, const QAudioFormat &format, in
     const int inputBytes = format.bytesPerSample();
     const int frameBytes = inputBytes * channels;
     const bool input16 = format.sampleFormat() == QAudioFormat::Int16;
+    const bool inputFloat = format.sampleFormat() == QAudioFormat::Float;
     const int frames = frameBytes > 0 ? pcm.size() / frameBytes : 0;
     const int outputBytes = outputBits / 8;
     const quint32 dataSize = quint32(frames * channels * outputBytes);
@@ -83,6 +87,11 @@ QByteArray wavFromCaptured(const QByteArray &pcm, const QAudioFormat &format, in
             qint32 value = 0;
             if (input16) {
                 value = qint32(qFromLittleEndian<qint16>(frameData + channel * inputBytes)) << 16;
+            } else if (inputFloat) {
+                float sample = 0.0f;
+                std::memcpy(&sample, frameData + channel * inputBytes, sizeof(float));
+                const double scaled = qBound(-1.0f, sample, 1.0f) * 2147483647.0;
+                value = qint32(std::llround(scaled));
             } else if (format.sampleFormat() == QAudioFormat::Int32) {
                 value = qFromLittleEndian<qint32>(frameData + channel * inputBytes);
             }

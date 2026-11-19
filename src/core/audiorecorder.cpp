@@ -1,5 +1,6 @@
 #include "core/audiorecorder.h"
 
+#include "core/audiodevices.h"
 #include "core/pcm.h"
 #include "core/wav.h"
 
@@ -8,6 +9,7 @@
 #include <QtEndian>
 
 #include <cmath>
+#include <cstring>
 
 namespace {
 constexpr qint64 kMaxBytes = 512LL * 1024 * 1024;
@@ -45,19 +47,24 @@ bool AudioRecorder::start(const QAudioDevice &device, int sampleRate, int channe
         return false;
     }
 
-    m_bits = (bits == 16 || bits == 24 || bits == 32) ? bits : 16;
     m_gain = qBound(0.0, gain, 20.0);
-    m_format = formatFor(sampleRate, channels, m_bits);
-    if (!device.isFormatSupported(m_format)) {
-        if (error) {
-            *error = QStringLiteral("「%1」不支持 %2 Hz / %3 声道 / %4 位录音")
-                         .arg(device.description())
-                         .arg(sampleRate)
-                         .arg(channels)
-                         .arg(m_bits);
-        }
+    const int wantedBits = (bits == 16 || bits == 24 || bits == 32) ? bits : 16;
+    const audio::ResolvedFormat resolved =
+        audio::resolveInputFormat(device, sampleRate, channels, wantedBits);
+    if (!resolved.format.isValid()) {
+        if (error)
+            *error = QStringLiteral("「%1」没有可用的录音格式").arg(device.description());
         return false;
     }
+    m_format = resolved.format;
+    m_bits = resolved.bits;
+    m_adjusted = resolved.adjusted;
+    m_note = resolved.adjusted
+        ? QStringLiteral("「%1」不支持 %2，已自动切换为 %3")
+              .arg(device.description(),
+                   audio::formatText(sampleRate, channels, wantedBits),
+                   audio::formatText(resolved.sampleRate, resolved.channels, resolved.bits))
+        : QString();
 
     m_source = new QAudioSource(device, m_format, this);
     m_source->setBufferSize(m_format.bytesForDuration(100000));
@@ -134,6 +141,14 @@ QByteArray AudioRecorder::applyGain(const QByteArray &data) const
             const qint32 clamped = qint32(
                 qBound<qint64>(-2147483648LL, boosted, 2147483647LL));
             qToLittleEndian(clamped, bytes + i * 4);
+        }
+    } else if (m_format.sampleFormat() == QAudioFormat::Float) {
+        const int count = out.size() / 4;
+        for (int i = 0; i < count; ++i) {
+            float sample = 0.0f;
+            std::memcpy(&sample, bytes + i * 4, sizeof(float));
+            sample = qBound(-1.0f, float(sample * m_gain), 1.0f);
+            std::memcpy(bytes + i * 4, &sample, sizeof(float));
         }
     }
     return out;

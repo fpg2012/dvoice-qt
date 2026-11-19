@@ -2,6 +2,7 @@
 
 #include "audiomonitor.h"
 #include "core/audiodevices.h"
+#include "core/pcm.h"
 
 #include <QAudioFormat>
 #include <QAudioSink>
@@ -15,9 +16,11 @@
 #include <QPushButton>
 #include <QSlider>
 #include <QVBoxLayout>
+#include <QVector>
 #include <QtEndian>
 
 #include <cmath>
+#include <cstring>
 
 namespace {
 
@@ -43,6 +46,47 @@ QByteArray makeTestTone(int sampleRate)
         }
     }
     return pcm;
+}
+
+// 把 24 kHz 单声道 16-bit 的测试音转成目标设备真正支持的格式。
+QByteArray toDevicePcm(const QByteArray &mono16, int sourceRate, const QAudioFormat &target)
+{
+    QAudioFormat source;
+    source.setSampleRate(sourceRate);
+    source.setChannelCount(1);
+    source.setSampleFormat(QAudioFormat::Int16);
+    if (target == source)
+        return mono16;
+
+    QVector<float> samples = pcm::resample(pcm::toMonoFloat(mono16, source), sourceRate,
+                                           target.sampleRate());
+    const int channels = qMax(1, target.channelCount());
+    QByteArray out;
+    out.reserve(int(samples.size()) * channels * target.bytesPerSample());
+    for (const float value : samples) {
+        const float clamped = qBound(-1.0f, value, 1.0f);
+        for (int channel = 0; channel < channels; ++channel) {
+            char buffer[4];
+            switch (target.sampleFormat()) {
+            case QAudioFormat::Float: {
+                std::memcpy(buffer, &clamped, sizeof(float));
+                out.append(buffer, 4);
+                break;
+            }
+            case QAudioFormat::Int32: {
+                qToLittleEndian(qint32(std::llround(double(clamped) * 2147483647.0)), buffer);
+                out.append(buffer, 4);
+                break;
+            }
+            default: {
+                qToLittleEndian(qint16(std::lround(clamped * 32767.0f)), buffer);
+                out.append(buffer, 2);
+                break;
+            }
+            }
+        }
+    }
+    return out;
 }
 
 QString dbText(qreal rms)
@@ -283,20 +327,24 @@ void SpeakerTestDialog::setStatus(const QString &text)
 void SpeakerTestDialog::startTone()
 {
     stopAll();
-    m_tone = makeTestTone(24000);
-    if (m_tone.isEmpty())
+    const QByteArray tone = makeTestTone(24000);
+    if (tone.isEmpty())
         return;
     m_monitor->clear();
-    m_monitor->feed(m_tone);
-
-    QAudioFormat format;
-    format.setSampleRate(24000);
-    format.setChannelCount(1);
-    format.setSampleFormat(QAudioFormat::Int16);
+    m_monitor->feed(tone);
 
     const QAudioDevice device = audio::findOutput(m_device->currentData().toString());
-    m_toneSink = device.isNull() ? new QAudioSink(format, this)
-                                 : new QAudioSink(device, format, this);
+    const audio::ResolvedFormat resolved = audio::resolveOutputFormat(device, 24000, 1, 16);
+    if (!resolved.format.isValid()) {
+        setStatus(QStringLiteral("「%1」没有可用的播放格式。").arg(audio::displayName(device)));
+        return;
+    }
+    m_tone = toDevicePcm(tone, 24000, resolved.format);
+    if (m_tone.isEmpty())
+        return;
+
+    m_toneSink = device.isNull() ? new QAudioSink(resolved.format, this)
+                                 : new QAudioSink(device, resolved.format, this);
     m_toneSink->setVolume(m_volume->value() / 100.0);
     m_toneBuffer = new QBuffer(&m_tone, this);
     m_toneBuffer->open(QIODevice::ReadOnly);
